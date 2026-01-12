@@ -67,11 +67,30 @@ export default function HomePage() {
   const [edges, setEdges] = useState<FlowEdge[]>([]);
   const [domainInput, setDomainInput] = useState("");
   const [activeDomain, setActiveDomain] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusVisible, setStatusVisible] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [depth, setDepth] = useState(1);
+  const [depthOpen, setDepthOpen] = useState(false);
 
   const nodeTypes = useMemo(() => ({ card: CardNode }), []);
   const hasGraph = nodes.length > 0;
+  const depthOptions = useMemo(() => [1, 2, 3, 4, 5], []);
+
+  const showStatus = useCallback((message: string) => {
+    setStatusMessage(message);
+  }, []);
+
+  useEffect(() => {
+    if (!statusMessage) return;
+    setStatusVisible(true);
+    const hide = setTimeout(() => setStatusVisible(false), 2200);
+    const clear = setTimeout(() => setStatusMessage(null), 3000);
+    return () => {
+      clearTimeout(hide);
+      clearTimeout(clear);
+    };
+  }, [statusMessage]);
 
   const loadLatest = useCallback(async () => {
     try {
@@ -79,7 +98,7 @@ export default function HomePage() {
       const data: LatestProjectResponse = await res.json();
       const project = data?.project;
       if (!project) {
-        setStatus("Gib eine Domain ein, um zu starten.");
+        showStatus("Gib eine Domain ein, um zu starten.");
         return;
       }
 
@@ -87,11 +106,11 @@ export default function HomePage() {
       setEdges((project.edges as FlowEdge[]) || []);
       setActiveDomain(project.domain);
       setDomainInput((current) => current || project.domain);
-      setStatus("Letzte gespeicherte Karte geladen.");
+      showStatus("Letzte gespeicherte Karte geladen.");
     } catch {
-      setStatus("Konnte letzte Karte nicht laden.");
+      showStatus("Konnte letzte Karte nicht laden.");
     }
-  }, []);
+  }, [showStatus]);
 
   useEffect(() => {
     loadLatest();
@@ -99,18 +118,18 @@ export default function HomePage() {
 
   const handleCrawl = async () => {
     if (!domainInput.trim()) {
-      setStatus("Bitte eine Domain eingeben.");
+      showStatus("Bitte eine Domain eingeben.");
       return;
     }
 
     setLoading(true);
-    setStatus(null);
+    setStatusMessage(null);
 
     try {
       const res = await fetch("/api/crawl", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain: domainInput.trim() }),
+        body: JSON.stringify({ domain: domainInput.trim(), depth }),
       });
 
       const data = await res.json();
@@ -121,12 +140,13 @@ export default function HomePage() {
       setNodes((data.nodes as FlowNode[]) || []);
       setEdges((data.edges as FlowEdge[]) || []);
       setActiveDomain(data.domain);
-      setStatus("Struktur gespeichert (SQLite).");
+      showStatus(`Struktur gespeichert (Tiefe ${depth}, SQLite).`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Fehler beim Crawlen.";
-      setStatus(message);
+      showStatus(message);
     } finally {
       setLoading(false);
+      setDepthOpen(false);
     }
   };
 
@@ -141,6 +161,18 @@ export default function HomePage() {
 
   return (
     <div className="relative h-screen w-full overflow-hidden bg-[#f9fbff] text-slate-900">
+      {statusMessage && (
+        <div
+          className={`pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 transition-all duration-500 ${
+            statusVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2"
+          }`}
+        >
+          <div className="pointer-events-auto rounded-full bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-md ring-1 ring-slate-200">
+            {statusMessage}
+          </div>
+        </div>
+      )}
+
       <div className="absolute left-6 top-6 flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#f0e8ff] text-xl">
           🐙
@@ -156,7 +188,7 @@ export default function HomePage() {
       <div className="absolute right-6 top-6 flex items-center gap-3">
         <button
           className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-100"
-          onClick={() => setStatus("Bereits automatisch gespeichert.")}
+          onClick={() => showStatus("Bereits automatisch gespeichert.")}
         >
           Save
         </button>
@@ -189,15 +221,11 @@ export default function HomePage() {
               Gib eine Domain ein, um die erste Ebene zu sehen.
             </p>
             <p className="mt-2 text-slate-500">
-              Wir crawlen nur Klicktiefe 1, speichern das Ergebnis in SQLite und zeigen es
-              hier als Karte an.
+              Wir crawlen die gewählte Klicktiefe (1-5), speichern das Ergebnis in SQLite
+              und zeigen es hier als Karte an.
             </p>
           </div>
         )}
-
-        <div className="pointer-events-none absolute left-1/2 top-28 -translate-x-1/2 text-xs uppercase tracking-[0.35em] text-slate-300">
-          Section
-        </div>
       </div>
 
       <div className="pointer-events-none absolute inset-x-0 bottom-24 mx-auto flex max-w-2xl items-center justify-center px-4">
@@ -208,13 +236,42 @@ export default function HomePage() {
             placeholder="z. B. example.com"
             className="flex-1 border-none text-base focus:outline-none"
           />
-          <button
-            onClick={handleCrawl}
-            disabled={loading}
-            className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-70"
-          >
-            {loading ? "Crawle..." : "Crawl"}
-          </button>
+          <div className="relative flex items-center gap-2">
+            <button
+              onClick={handleCrawl}
+              disabled={loading}
+              className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-70"
+            >
+              {loading ? "Crawle..." : "Crawl"}
+            </button>
+            <div className="relative">
+              <button
+                onClick={() => setDepthOpen((v) => !v)}
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50"
+                aria-label="Klicktiefe wählen"
+              >
+                {depth}
+              </button>
+              {depthOpen && (
+                <div className="absolute bottom-12 left-1/2 z-10 w-16 -translate-x-1/2 rounded-2xl border border-slate-200 bg-white py-1 shadow-lg">
+                  {depthOptions.map((option) => (
+                    <button
+                      key={option}
+                      onClick={() => {
+                        setDepth(option);
+                        setDepthOpen(false);
+                      }}
+                      className={`flex w-full items-center justify-center px-2 py-1 text-sm font-semibold transition hover:bg-slate-100 ${
+                        option === depth ? "text-slate-900" : "text-slate-600"
+                      }`}
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
           <button
             onClick={loadLatest}
             className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200"
@@ -265,11 +322,6 @@ export default function HomePage() {
         ))}
       </div>
 
-      {status && (
-        <div className="absolute left-1/2 bottom-36 -translate-x-1/2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-slate-600 shadow-lg ring-1 ring-slate-200">
-          {status}
-        </div>
-      )}
     </div>
   );
 }

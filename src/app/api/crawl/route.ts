@@ -8,12 +8,14 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const domain = (body?.domain as string | undefined)?.trim();
+    const depthInput = Number(body?.depth);
+    const depth = Number.isFinite(depthInput) ? depthInput : 1;
 
     if (!domain) {
       return NextResponse.json({ error: "Bitte eine Domain angeben." }, { status: 400 });
     }
 
-    const result = await crawlDomain(domain);
+    const result = await crawlDomain(domain, depth);
     saveProject(result.domain, result.nodes, result.edges);
 
     return NextResponse.json(result);
