@@ -1,5 +1,6 @@
 "use client";
 
+import dagre from "dagre";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactFlow, {
   Background,
@@ -76,6 +77,15 @@ export default function HomePage() {
   const nodeTypes = useMemo(() => ({ card: CardNode }), []);
   const hasGraph = nodes.length > 0;
   const depthOptions = useMemo(() => [1, 2, 3, 4, 5], []);
+  const defaultEdgeOptions = useMemo(
+    () => ({
+      type: "step" as const,
+      style: { stroke: "#b7c7ff", strokeWidth: 2 },
+      interactionWidth: 20,
+      pathOptions: { borderRadius: 14 },
+    }),
+    []
+  );
 
   const showStatus = useCallback((message: string) => {
     setStatusMessage(message);
@@ -92,6 +102,45 @@ export default function HomePage() {
     };
   }, [statusMessage]);
 
+  const applyLayout = useCallback((inputNodes: FlowNode[], inputEdges: FlowEdge[]) => {
+    const g = new dagre.graphlib.Graph();
+    g.setDefaultEdgeLabel(() => ({}));
+    g.setGraph({
+      rankdir: "TB",
+      nodesep: 40,
+      ranksep: 140,
+      marginx: 60,
+      marginy: 40,
+    });
+
+    inputNodes.forEach((node) => {
+      g.setNode(node.id, { width: 200, height: 120 });
+    });
+    inputEdges.forEach((edge) => {
+      g.setEdge(edge.source, edge.target);
+    });
+
+    dagre.layout(g);
+
+    const layoutedNodes = inputNodes.map((node) => {
+      const pos = g.node(node.id);
+      return {
+        ...node,
+        position: {
+          x: pos.x - 100,
+          y: pos.y - 60,
+        },
+      };
+    });
+
+    const layoutedEdges = inputEdges.map((edge) => ({
+      ...edge,
+      type: edge.type || "step",
+    }));
+
+    return { nodes: layoutedNodes, edges: layoutedEdges };
+  }, []);
+
   const loadLatest = useCallback(async () => {
     try {
       const res = await fetch("/api/projects/latest", { cache: "no-store" });
@@ -102,15 +151,19 @@ export default function HomePage() {
         return;
       }
 
-      setNodes((project.nodes as FlowNode[]) || []);
-      setEdges((project.edges as FlowEdge[]) || []);
+      const layout = applyLayout(
+        (project.nodes as FlowNode[]) || [],
+        (project.edges as FlowEdge[]) || []
+      );
+      setNodes(layout.nodes);
+      setEdges(layout.edges);
       setActiveDomain(project.domain);
       setDomainInput((current) => current || project.domain);
       showStatus("Letzte gespeicherte Karte geladen.");
     } catch {
       showStatus("Konnte letzte Karte nicht laden.");
     }
-  }, [showStatus]);
+  }, [applyLayout, showStatus]);
 
   useEffect(() => {
     loadLatest();
@@ -137,8 +190,9 @@ export default function HomePage() {
         throw new Error(data?.error || "Fehler beim Crawlen.");
       }
 
-      setNodes((data.nodes as FlowNode[]) || []);
-      setEdges((data.edges as FlowEdge[]) || []);
+      const layout = applyLayout((data.nodes as FlowNode[]) || [], (data.edges as FlowEdge[]) || []);
+      setNodes(layout.nodes);
+      setEdges(layout.edges);
       setActiveDomain(data.domain);
       showStatus(`Struktur gespeichert (Tiefe ${depth}, SQLite).`);
     } catch (error) {
@@ -205,6 +259,7 @@ export default function HomePage() {
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
+          defaultEdgeOptions={defaultEdgeOptions}
           fitView
           minZoom={0.3}
           maxZoom={2}
@@ -291,12 +346,6 @@ export default function HomePage() {
             <span>{item.label}</span>
           </div>
         ))}
-      </div>
-
-      <div className="absolute left-1/2 bottom-32 -translate-x-1/2">
-        <button className="flex h-12 w-12 items-center justify-center rounded-full border border-slate-200 bg-white text-2xl text-slate-700 shadow-lg hover:bg-slate-50">
-          +
-        </button>
       </div>
 
       <div className="absolute left-6 bottom-6 flex items-center gap-3">

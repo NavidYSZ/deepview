@@ -55,47 +55,12 @@ function makeNodeId(path: string) {
   return `node-${path.replace(/[^a-zA-Z0-9-_]/g, "-") || "root"}`;
 }
 
-function layoutNodes(nodes: CrawledNode[]) {
-  const grouped = nodes.reduce<Record<number, CrawledNode[]>>((acc, node) => {
-    acc[node.depth] = acc[node.depth] || [];
-    acc[node.depth].push(node);
-    return acc;
-  }, {});
-
-  const yGap = 200;
-  const xGap = 230;
-
-  const flowNodes: FlowNode[] = [];
-
-  Object.keys(grouped)
-    .map((d) => Number(d))
-    .sort((a, b) => a - b)
-    .forEach((depth) => {
-      const list = grouped[depth];
-      const startX = -((list.length - 1) * xGap) / 2;
-      list.forEach((node, index) => {
-        flowNodes.push({
-          id: node.id,
-          data: {
-            label: node.label,
-            path: node.path,
-            isRoot: depth === 0,
-          },
-          position: { x: startX + index * xGap, y: depth * yGap },
-          type: "card",
-        });
-      });
-    });
-
-  return flowNodes;
-}
-
 export async function crawlDomain(
   domain: string,
   maxDepth: number = 1
 ): Promise<CrawlResult> {
   const normalized = normalizeDomain(domain);
-  const rootUrl = new URL(normalized);
+  let rootUrl = new URL(normalized);
   const depthLimit = Math.min(Math.max(1, Math.floor(maxDepth)), MAX_DEPTH);
 
   const nodes: CrawledNode[] = [
@@ -131,6 +96,15 @@ export async function crawlDomain(
         // Skip this branch but continue crawling others.
         continue;
       }
+
+      // Follow redirect host if any (helps when non-www redirects to www).
+      try {
+        const finalUrl = new URL(response.url);
+        rootUrl = new URL(rootUrl.toString().replace(rootUrl.hostname, finalUrl.hostname));
+      } catch {
+        // ignore if parsing fails
+      }
+
       html = await response.text();
     } catch {
       continue;
@@ -168,7 +142,7 @@ export async function crawlDomain(
         id: `e-${current.nodeId}-${id}`,
         source: current.nodeId,
         target: id,
-        type: "smoothstep",
+        type: "step",
         animated: false,
         style: { stroke: "#b7c7ff", strokeWidth: 2 },
       });
@@ -192,15 +166,26 @@ export async function crawlDomain(
       id: `e-root-${emptyId}`,
       source: "root",
       target: emptyId,
-      type: "smoothstep",
+      type: "step",
       animated: false,
       style: { stroke: "#b7c7ff", strokeWidth: 2 },
     });
   }
 
+  const flowNodes: FlowNode[] = nodes.map((node) => ({
+    id: node.id,
+    data: {
+      label: node.label,
+      path: node.path,
+      isRoot: node.depth === 0,
+    },
+    position: { x: 0, y: 0 }, // will be laid out on the client
+    type: "card",
+  }));
+
   return {
     domain: rootUrl.hostname,
-    nodes: layoutNodes(nodes),
+    nodes: flowNodes,
     edges,
   };
 }
