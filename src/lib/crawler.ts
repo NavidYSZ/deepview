@@ -4,12 +4,10 @@ import type { Edge, Node } from "reactflow";
 type FlowNode = Node<{ label: string; path?: string; isRoot?: boolean }>;
 type FlowEdge = Edge;
 
-type CrawledNode = {
-  id: string;
-  label: string;
+type PageInfo = {
   path: string;
-  depth: number;
-  parentId: string | null;
+  url: URL;
+  title?: string;
 };
 
 export type CrawlResult = {
@@ -19,6 +17,7 @@ export type CrawlResult = {
 };
 
 const MAX_DEPTH = 5;
+const MAX_PAGES = 80;
 
 export function normalizeDomain(input: string) {
   const trimmed = input.trim();
@@ -30,22 +29,6 @@ export function normalizeDomain(input: string) {
   return url.toString().replace(/\/$/, "");
 }
 
-function normalizeHref(base: URL, href?: string | null) {
-  if (!href) return null;
-  if (href.startsWith("#")) return null;
-  if (href.startsWith("mailto:") || href.startsWith("tel:")) return null;
-
-  try {
-    const url = new URL(href, base);
-    url.hash = "";
-    url.search = "";
-    url.protocol = base.protocol;
-    return url;
-  } catch {
-    return null;
-  }
-}
-
 function cleanPath(url: URL) {
   return url.pathname.replace(/\/$/, "") || "/";
 }
@@ -55,137 +38,204 @@ function makeNodeId(path: string) {
   return `node-${path.replace(/[^a-zA-Z0-9-_]/g, "-") || "root"}`;
 }
 
+function pathSegments(path: string) {
+  const clean = path === "/" ? [] : path.replace(/^\//, "").split("/").filter(Boolean);
+  return clean;
+}
+
+function parentPath(path: string) {
+  const segs = pathSegments(path);
+  if (segs.length === 0) return null;
+  if (segs.length === 1) return "/";
+  return `/${segs.slice(0, -1).join("/")}`;
+}
+
+async function fetchSitemapUrls(root: URL): Promise<URL[]> {
+  const candidates = [new URL("/sitemap.xml", root), new URL("/sitemap_index.xml", root)];
+  const urls: URL[] = [];
+
+  for (const candidate of candidates) {
+    try {
+      const res = await fetch(candidate.toString(), {
+        headers: { "User-Agent": "DeepviewCrawler/0.1 (+https://example.com)" },
+      });
+      if (!res.ok) continue;
+      const text = await res.text();
+      const $ = load(text, { xmlMode: true });
+      $("loc").each((_, el) => {
+        const loc = $(el).text().trim();
+        if (!loc) return;
+        try {
+          const u = new URL(loc);
+          u.hash = "";
+          u.search = "";
+          if (u.hostname === root.hostname) {
+            urls.push(u);
+          }
+        } catch {
+          // ignore invalid
+        }
+      });
+      if (urls.length) break; // first successful sitemap wins
+    } catch {
+      // ignore
+    }
+  }
+
+  return urls.slice(0, MAX_PAGES);
+}
+
+async function fetchPageInfo(url: URL): Promise<{ title?: string; links: URL[] }> {
+  const res = await fetch(url.toString(), {
+    headers: { "User-Agent": "DeepviewCrawler/0.1 (+https://example.com)" },
+  });
+  if (!res.ok) {
+    return { links: [] };
+  }
+  const html = await res.text();
+  const $ = load(html);
+  const title = $("title").first().text().trim() || undefined;
+  const links: URL[] = [];
+  $("a[href]").each((_, el) => {
+    const href = $(el).attr("href");
+    try {
+      const u = new URL(href || "", url);
+      u.hash = "";
+      u.search = "";
+      links.push(u);
+    } catch {
+      // ignore
+    }
+  });
+  return { title, links };
+}
+
 export async function crawlDomain(
   domain: string,
   maxDepth: number = 1
 ): Promise<CrawlResult> {
   const normalized = normalizeDomain(domain);
-  let rootUrl = new URL(normalized);
+  const rootUrl = new URL(normalized);
   const depthLimit = Math.min(Math.max(1, Math.floor(maxDepth)), MAX_DEPTH);
 
-  const nodes: CrawledNode[] = [
-    {
-      id: "root",
-      label: rootUrl.hostname,
-      path: "/",
-      depth: 0,
-      parentId: null,
-    },
-  ];
-  const edges: FlowEdge[] = [];
+  const pages = new Map<string, PageInfo>();
 
-  const seenPaths = new Set<string>(["/"]);
-  const queue: { url: URL; depth: number; nodeId: string }[] = [
-    { url: rootUrl, depth: 0, nodeId: "root" },
-  ];
+  const addPage = (url: URL, title?: string) => {
+    if (url.hostname !== rootUrl.hostname) return;
+    const path = cleanPath(url);
+    pages.set(path, { path, url, title: title || pages.get(path)?.title });
+  };
 
-  while (queue.length > 0) {
+  // Always include root
+  addPage(rootUrl);
+
+  // Try sitemap
+  const sitemapUrls = await fetchSitemapUrls(rootUrl);
+  sitemapUrls.forEach((url) => addPage(url));
+
+  // Crawl by fetching pages up to MAX_PAGES and respecting depthLimit by path
+  const queue: URL[] = [rootUrl];
+  const processed = new Set<string>();
+
+  while (queue.length && pages.size < MAX_PAGES) {
     const current = queue.shift();
     if (!current) break;
 
-    if (current.depth >= depthLimit) {
+    const path = cleanPath(current);
+    const depth = pathSegments(path).length;
+    if (depth > depthLimit) {
       continue;
     }
+    if (processed.has(path)) continue;
+    processed.add(path);
 
-    let html: string | null = null;
     try {
-      const response = await fetch(current.url.toString(), {
-        headers: { "User-Agent": "DeepviewCrawler/0.1 (+https://example.com)" },
-      });
-      if (!response.ok) {
-        // Skip this branch but continue crawling others.
-        continue;
-      }
+      const { title, links } = await fetchPageInfo(current);
+      addPage(current, title);
 
-      // Follow redirect host if any (helps when non-www redirects to www).
-      try {
-        const finalUrl = new URL(response.url);
-        rootUrl = new URL(rootUrl.toString().replace(rootUrl.hostname, finalUrl.hostname));
-      } catch {
-        // ignore if parsing fails
+      for (const link of links) {
+        if (link.hostname !== rootUrl.hostname) continue;
+        const childPath = cleanPath(link);
+        const childDepth = pathSegments(childPath).length;
+        if (childDepth > depthLimit) continue;
+        if (pages.size >= MAX_PAGES) break;
+        addPage(link);
+        queue.push(link);
       }
-
-      html = await response.text();
     } catch {
-      continue;
+      // ignore fetch errors
     }
+  }
 
-    if (!html) continue;
-    const $ = load(html);
+  // Build edges by path hierarchy
+  const flowNodes: FlowNode[] = [];
+  const flowEdges: FlowEdge[] = [];
 
-    $("a[href]").each((_, el) => {
-      const href = $(el).attr("href");
-      const url = normalizeHref(rootUrl, href);
-      if (!url) return;
-      if (url.hostname !== rootUrl.hostname) return;
+  const allPaths = Array.from(pages.keys());
+  if (allPaths.length === 1) {
+    return {
+      domain: rootUrl.hostname,
+      nodes: [
+        {
+          id: "root",
+          data: { label: rootUrl.hostname, path: "/", isRoot: true },
+          position: { x: 0, y: 0 },
+          type: "card",
+        },
+        {
+          id: "node-empty",
+          data: { label: "Keine Links gefunden", path: "/" },
+          position: { x: 0, y: 0 },
+          type: "card",
+        },
+      ],
+      edges: [
+        {
+          id: "e-root-empty",
+          source: "root",
+          target: "node-empty",
+          type: "step",
+          style: { stroke: "#b7c7ff", strokeWidth: 2 },
+        },
+      ],
+    };
+  }
 
-      const normalizedPath = cleanPath(url);
-      if (normalizedPath === "/") return;
-      if (seenPaths.has(normalizedPath)) return;
+  allPaths.forEach((path) => {
+    const info = pages.get(path)!;
+    const segs = pathSegments(path);
+    const depth = segs.length;
+    const label =
+      info.title || (segs.length ? segs[segs.length - 1] : rootUrl.hostname) || "Page";
+    const nodeId = makeNodeId(path);
 
-      seenPaths.add(normalizedPath);
+    flowNodes.push({
+      id: nodeId,
+      data: {
+        label: label.length > 40 ? `${label.slice(0, 40)}…` : label,
+        path,
+        isRoot: depth === 0,
+      },
+      position: { x: 0, y: 0 },
+      type: "card",
+    });
 
-      const text = $(el).text().trim() || normalizedPath.split("/").pop() || "Page";
-      const label = text.length > 28 ? `${text.slice(0, 28)}…` : text || "Page";
-
-      const id = makeNodeId(normalizedPath);
-      const childDepth = current.depth + 1;
-      nodes.push({
-        id,
-        label,
-        path: normalizedPath,
-        depth: childDepth,
-        parentId: current.nodeId,
-      });
-
-      edges.push({
-        id: `e-${current.nodeId}-${id}`,
-        source: current.nodeId,
-        target: id,
+    const parent = parentPath(path);
+    if (parent) {
+      const parentId = makeNodeId(parent);
+      flowEdges.push({
+        id: `e-${parentId}-${nodeId}`,
+        source: parentId,
+        target: nodeId,
         type: "step",
-        animated: false,
         style: { stroke: "#b7c7ff", strokeWidth: 2 },
       });
-
-      if (childDepth < depthLimit) {
-        queue.push({ url, depth: childDepth, nodeId: id });
-      }
-    });
-  }
-
-  if (nodes.length === 1) {
-    const emptyId = "node-empty";
-    nodes.push({
-      id: emptyId,
-      label: "Keine Links gefunden",
-      path: "/",
-      depth: 1,
-      parentId: "root",
-    });
-    edges.push({
-      id: `e-root-${emptyId}`,
-      source: "root",
-      target: emptyId,
-      type: "step",
-      animated: false,
-      style: { stroke: "#b7c7ff", strokeWidth: 2 },
-    });
-  }
-
-  const flowNodes: FlowNode[] = nodes.map((node) => ({
-    id: node.id,
-    data: {
-      label: node.label,
-      path: node.path,
-      isRoot: node.depth === 0,
-    },
-    position: { x: 0, y: 0 }, // will be laid out on the client
-    type: "card",
-  }));
+    }
+  });
 
   return {
     domain: rootUrl.hostname,
     nodes: flowNodes,
-    edges,
+    edges: flowEdges,
   };
 }
