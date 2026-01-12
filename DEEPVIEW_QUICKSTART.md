@@ -10,6 +10,7 @@
 ## APIs to Know
 - `POST /api/crawl` — Body `{ domain: string }` → crawls depth 1, saves to SQLite, returns `{ domain, nodes, edges }`.
 - `GET /api/projects/latest` — Returns last saved graph or `project: null`.
+  - Crawl depth uses URL path depth (not click graph); sitemap is ingested when present.
 
 ## Key Files
 - UI: `src/app/page.tsx` (React Flow canvas, crawl/load actions, card node).
@@ -20,8 +21,9 @@
 
 ## Behavior Snapshot
 - On load: auto-fetch latest project; status pill indicates result.
-- Crawl: posts domain, normalizes to root, builds nodes/edges from first-level links, saves automatically.
-- Graph: custom `card` nodes, root at top, children in a horizontal row; infinite pan/zoom via React Flow.
+- Crawl: posts domain, normalizes to root, builds nodes/edges from URL path hierarchy (with sitemap support), saves automatically.
+- Visibility: only depth 0–1 shown by default; ▼ toggles deeper nodes; 🖥 shows all.
+- Graph: custom `card` nodes, Dagre layout; wrapping of >4 children only for depth ≥2; edges to wrapped children are black/transparent.
 - Placeholders: toolbar/save buttons are non-functional; crawl + load are functional.
 
 ## Deployment (Coolify / Nixpacks)

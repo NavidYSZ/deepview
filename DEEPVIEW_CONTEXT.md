@@ -10,12 +10,12 @@ What you asked for
 - Language used in UI/status: German short strings (e.g., “Bitte eine Domain eingeben.”).
 
 What was built (high-level)
-- Next.js (App Router, TypeScript) + Tailwind; React Flow canvas with custom “card” node type.
-- Crawler (Cheerio + fetch) for click depth 1, same host only; produces React Flow nodes/edges.
+- Next.js (App Router, TypeScript) + Tailwind; React Flow canvas with custom “card” node type, step edges, Dagre layout.
+- Crawler (Cheerio + fetch) for path-based depth (1–5) with sitemap ingest; same host only; produces React Flow nodes/edges.
 - SQLite via `better-sqlite3` with a `projects` table; latest crawl is saved automatically.
 - API routes: `POST /api/crawl` (crawl + save) and `GET /api/projects/latest` (load last).
-- UI auto-loads last saved map on page load; crawl button triggers fetch/save and refreshes the graph.
-- Placeholder toolbars to mirror Octopus.do layout; only crawl/load are functional in Alpha.
+- UI auto-loads last saved map on page load; crawl triggers fetch/save and refreshes graph; expand/collapse per node; display toggle to show all.
+- Placeholder toolbars to mirror Octopus.do layout; only crawl/load/expand/display are functional.
 
 Environment/setup notes I know about
 - Project folder: `deepview` (fresh Next.js app scaffolded with npm/Tailwind).
@@ -25,10 +25,11 @@ Environment/setup notes I know about
 
 Key files (orientation)
 - `src/app/page.tsx` — UI + React Flow + crawl/load actions.
-- `src/lib/crawler.ts` — depth-1 crawl and graph assembly.
+- `src/lib/crawler.ts` — sitemap + path-depth crawl (1–5), graph assembly.
 - `src/lib/db.ts` — SQLite setup/helpers.
 - `src/app/api/crawl/route.ts`, `src/app/api/projects/latest/route.ts` — API endpoints.
 - `DEEPVIEW_OVERVIEW.md`, `DEEPVIEW_IMPLEMENTATION_NOTES.md`, `DEEPVIEW_QUICKSTART.md` — prior handover docs.
+- `KNOWN_BUGS_AND_FIXES.md` — flackern fix notes.
 
 Known limitations
 - Only first-level links (no deeper tree).
