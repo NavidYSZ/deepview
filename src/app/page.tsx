@@ -1,7 +1,7 @@
 "use client";
 
 import dagre from "dagre";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactFlow, {
   Background,
   Edge,
@@ -106,7 +106,7 @@ export default function HomePage() {
   const [depthOpen, setDepthOpen] = useState(false);
   const [fullNodes, setFullNodes] = useState<FlowNode[]>([]);
   const [fullEdges, setFullEdges] = useState<FlowEdge[]>([]);
-  const [, setExpanded] = useState<Set<string>>(new Set());
+  const expandedRef = useRef<Set<string>>(new Set());
   const [showAll, setShowAll] = useState(false);
 
   const nodeTypes = useMemo(() => ({ card: CardNode }), []);
@@ -306,10 +306,17 @@ export default function HomePage() {
             } else {
               nextExpanded.add(node.id);
             }
+            expandedRef.current = nextExpanded;
             setShowAll(false);
-            setExpanded(nextExpanded);
-            const currentPositions = Object.fromEntries(nodes.map((n) => [n.id, n.position]));
-            rebuildGraph(srcNodes, srcEdges, nextExpanded, false, currentPositions);
+            rebuildGraph(
+              srcNodes,
+              srcEdges,
+              nextExpanded,
+              false,
+              prevPositions && Object.keys(prevPositions).length
+                ? prevPositions
+                : Object.fromEntries(nodes.map((n) => [n.id, n.position]))
+            );
           },
         },
       }));
@@ -343,11 +350,11 @@ export default function HomePage() {
       const edges = (project.edges as FlowEdge[]) || [];
       setFullNodes(nodes);
       setFullEdges(edges);
-      setExpanded(new Set());
+      expandedRef.current = new Set();
       setShowAll(false);
       setActiveDomain(project.domain);
       setDomainInput((current) => current || project.domain);
-      rebuildGraph(nodes, edges, new Set(), false);
+      rebuildGraph(nodes, edges, expandedRef.current, false);
       showStatus("Letzte gespeicherte Karte geladen.");
     } catch {
       showStatus("Konnte letzte Karte nicht laden.");
@@ -384,7 +391,7 @@ export default function HomePage() {
       setFullNodes(rawNodes);
       setFullEdges(rawEdges);
       const collapsed = new Set<string>();
-      setExpanded(collapsed);
+      expandedRef.current = collapsed;
       setShowAll(false);
       rebuildGraph(rawNodes, rawEdges, collapsed, false);
       setActiveDomain(data.domain);
@@ -398,33 +405,24 @@ export default function HomePage() {
     }
   };
 
-  const placeholderColors = useMemo(
-    () => [
-      { label: "Blue", color: "#2f6bff" },
-      { label: "Topaz", color: "#2eb397" },
-      { label: "Purple", color: "#8f6cff" },
-    ],
-    []
-  );
-
   const toggleShowAll = () => {
     const next = !showAll;
     if (!fullNodes.length) {
       setShowAll(next);
-      setExpanded(new Set());
+      expandedRef.current = new Set();
       showStatus(next ? "Alle Ebenen sichtbar." : "Nur erste Ebene sichtbar.");
       return;
     }
 
     if (next) {
       const expandedAll = new Set(fullNodes.map((n) => n.id));
-      setExpanded(expandedAll);
+      expandedRef.current = expandedAll;
       setShowAll(true);
       rebuildGraph(fullNodes, fullEdges, expandedAll, true, Object.fromEntries(nodes.map((n) => [n.id, n.position])));
       showStatus("Alle Ebenen sichtbar.");
     } else {
       const collapsed = new Set<string>();
-      setExpanded(collapsed);
+      expandedRef.current = collapsed;
       setShowAll(false);
       rebuildGraph(
         fullNodes,
@@ -574,15 +572,6 @@ export default function HomePage() {
       </div>
 
       <div className="absolute inset-x-0 bottom-14 flex items-center justify-center gap-6 text-xs font-medium text-slate-500">
-        {placeholderColors.map((item) => (
-          <div key={item.label} className="flex items-center gap-2">
-            <span
-              className="h-3 w-3 rounded-full"
-              style={{ backgroundColor: item.color }}
-            />
-            <span>{item.label}</span>
-          </div>
-        ))}
       </div>
 
       <div className="absolute left-6 bottom-6 flex items-center gap-3">
