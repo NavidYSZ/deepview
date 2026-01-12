@@ -197,6 +197,9 @@ export default function HomePage() {
         if (childIds.length <= 4) return;
         const parentNode = layouted.find((n) => n.id === parentId);
         if (!parentNode) return;
+        const parentDepth = parentNode.data?.depth ?? 0;
+        // No wrapping for root or its direct children (depth 0 or 1)
+        if (parentDepth <= 1) return;
 
         const centerX = parentNode.position.x + 100;
         const baseY = parentNode.position.y + 200;
@@ -245,7 +248,12 @@ export default function HomePage() {
   };
 
   const rebuildGraph = useCallback(
-    (srcNodes: FlowNode[], srcEdges: FlowEdge[], resetExpanded = false) => {
+    (
+      srcNodes: FlowNode[],
+      srcEdges: FlowEdge[],
+      resetExpanded = false,
+      showAllOverride?: boolean
+    ) => {
       const parentMap: Record<string, string | undefined> = {};
       const childrenMapFull: Record<string, string[]> = {};
 
@@ -258,7 +266,8 @@ export default function HomePage() {
       const expandedSet = resetExpanded ? new Set<string>() : expanded;
 
       const isVisible = (nodeId: string) => {
-        if (showAll) return true;
+        const viewAll = showAllOverride ?? showAll;
+        if (viewAll) return true;
         const node = srcNodes.find((n) => n.id === nodeId);
         if (!node) return false;
         const depth = depthFromNode(node);
@@ -393,14 +402,25 @@ export default function HomePage() {
   );
 
   const toggleShowAll = () => {
-    setShowAll((prev) => {
-      const next = !prev;
-      if (!next) {
-        setExpanded(new Set());
-      }
+    const next = !showAll;
+    if (!fullNodes.length) {
+      setShowAll(next);
+      setExpanded(new Set());
       showStatus(next ? "Alle Ebenen sichtbar." : "Nur erste Ebene sichtbar.");
-      return next;
-    });
+      return;
+    }
+
+    if (next) {
+      setShowAll(true);
+      rebuildGraph(fullNodes, fullEdges, false, true);
+      showStatus("Alle Ebenen sichtbar.");
+    } else {
+      const collapsed = new Set<string>();
+      setExpanded(collapsed);
+      setShowAll(false);
+      rebuildGraph(fullNodes, fullEdges, false, false);
+      showStatus("Nur erste Ebene sichtbar.");
+    }
   };
 
   return (
