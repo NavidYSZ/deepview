@@ -20,6 +20,7 @@ type FlowNode = Node<{
   hasChildren?: boolean;
   expanded?: boolean;
   onToggle?: () => void;
+  isNew?: boolean;
 }>;
 type FlowEdge = Edge;
 
@@ -41,7 +42,9 @@ const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
   return (
     <div className="relative">
       <div
-        className="group flex h-24 w-48 flex-col rounded-2xl bg-white px-4 py-3 shadow-[0_8px_24px_rgba(47,107,255,0.08)]"
+        className={`group flex h-24 w-48 flex-col rounded-2xl bg-white px-4 py-3 shadow-[0_8px_24px_rgba(47,107,255,0.08)] ${
+          data?.isNew ? "animate-[fade-in-up_0.22s_ease]" : ""
+        }`}
         style={{ border: `2px solid ${borderColor}` }}
       >
         <div className="flex items-center gap-1">
@@ -252,7 +255,8 @@ export default function HomePage() {
       srcNodes: FlowNode[],
       srcEdges: FlowEdge[],
       expandedSet: Set<string>,
-      viewAll: boolean
+      viewAll: boolean,
+      prevPositions: Record<string, { x: number; y: number }> = {}
     ) => {
       const parentMap: Record<string, string | undefined> = {};
       const childrenMapFull: Record<string, string[]> = {};
@@ -294,6 +298,7 @@ export default function HomePage() {
           depth: depthFromNode(node),
           hasChildren: (childrenMapFull[node.id] || []).length > 0,
           expanded: expandedSet.has(node.id),
+          isNew: !prevPositions[node.id],
           onToggle: () => {
             const nextExpanded = new Set(expandedSet);
             if (nextExpanded.has(node.id)) {
@@ -303,16 +308,25 @@ export default function HomePage() {
             }
             setShowAll(false);
             setExpanded(nextExpanded);
-            rebuildGraph(srcNodes, srcEdges, nextExpanded, false);
+            const currentPositions = Object.fromEntries(nodes.map((n) => [n.id, n.position]));
+            rebuildGraph(srcNodes, srcEdges, nextExpanded, false, currentPositions);
           },
         },
       }));
 
       const layout = applyLayout(decoratedNodes, visibleEdges);
-      setNodes(layout.nodes);
+
+      const mergedNodes = layout.nodes.map((node) => {
+        const prev = prevPositions[node.id];
+        return prev
+          ? { ...node, position: prev, data: { ...node.data, isNew: false } }
+          : node;
+      });
+
+      setNodes(mergedNodes);
       setEdges(layout.edges);
     },
-    [applyLayout]
+    [applyLayout, nodes]
   );
 
   const loadLatest = useCallback(async () => {
@@ -406,13 +420,19 @@ export default function HomePage() {
       const expandedAll = new Set(fullNodes.map((n) => n.id));
       setExpanded(expandedAll);
       setShowAll(true);
-      rebuildGraph(fullNodes, fullEdges, expandedAll, true);
+      rebuildGraph(fullNodes, fullEdges, expandedAll, true, Object.fromEntries(nodes.map((n) => [n.id, n.position])));
       showStatus("Alle Ebenen sichtbar.");
     } else {
       const collapsed = new Set<string>();
       setExpanded(collapsed);
       setShowAll(false);
-      rebuildGraph(fullNodes, fullEdges, collapsed, false);
+      rebuildGraph(
+        fullNodes,
+        fullEdges,
+        collapsed,
+        false,
+        Object.fromEntries(nodes.map((n) => [n.id, n.position]))
+      );
       showStatus("Nur erste Ebene sichtbar.");
     }
   };

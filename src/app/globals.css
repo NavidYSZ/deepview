@@ -21,3 +21,14 @@ body {
   font-family: "Manrope", var(--font-geist-sans), system-ui, -apple-system,
     sans-serif;
 }
+
+@keyframes fade-in-up {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
