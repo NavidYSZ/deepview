@@ -337,7 +337,7 @@ export default function HomePage() {
         </div>
       )}
 
-      <div className="absolute left-6 top-6 flex items-center gap-3">
+      <div className="absolute left-6 top-6 z-10 flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#f0e8ff] text-xl">
           🐙
         </div>
@@ -349,7 +349,7 @@ export default function HomePage() {
         </div>
       </div>
 
-      <div className="absolute right-6 top-6 flex items-center gap-3">
+      <div className="absolute right-6 top-6 z-10 flex items-center gap-3">
         <button
           className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-100"
           onClick={() => showStatus("Bereits automatisch gespeichert.")}
