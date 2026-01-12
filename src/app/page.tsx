@@ -107,7 +107,9 @@ export default function HomePage() {
   const [fullNodes, setFullNodes] = useState<FlowNode[]>([]);
   const [fullEdges, setFullEdges] = useState<FlowEdge[]>([]);
   const expandedRef = useRef<Set<string>>(new Set());
+  const showAllRef = useRef(false);
   const [showAll, setShowAll] = useState(false);
+  const prevVisibleRef = useRef<Set<string>>(new Set());
 
   const nodeTypes = useMemo(() => ({ card: CardNode }), []);
   const hasGraph = nodes.length > 0;
@@ -251,13 +253,7 @@ export default function HomePage() {
   };
 
   const rebuildGraph = useCallback(
-    (
-      srcNodes: FlowNode[],
-      srcEdges: FlowEdge[],
-      expandedSet: Set<string>,
-      viewAll: boolean,
-      prevPositions: Record<string, { x: number; y: number }> = {}
-    ) => {
+    (srcNodes: FlowNode[], srcEdges: FlowEdge[], expandedSet: Set<string>, viewAll: boolean) => {
       const parentMap: Record<string, string | undefined> = {};
       const childrenMapFull: Record<string, string[]> = {};
 
@@ -298,42 +294,28 @@ export default function HomePage() {
           depth: depthFromNode(node),
           hasChildren: (childrenMapFull[node.id] || []).length > 0,
           expanded: expandedSet.has(node.id),
-          isNew: !prevPositions[node.id],
+          isNew: !prevVisibleRef.current.has(node.id),
           onToggle: () => {
-            const nextExpanded = new Set(expandedSet);
+            const nextExpanded = new Set(expandedRef.current);
             if (nextExpanded.has(node.id)) {
               nextExpanded.delete(node.id);
             } else {
               nextExpanded.add(node.id);
             }
             expandedRef.current = nextExpanded;
+            showAllRef.current = false;
             setShowAll(false);
-            rebuildGraph(
-              srcNodes,
-              srcEdges,
-              nextExpanded,
-              false,
-              prevPositions && Object.keys(prevPositions).length
-                ? prevPositions
-                : Object.fromEntries(nodes.map((n) => [n.id, n.position]))
-            );
+            rebuildGraph(srcNodes, srcEdges, nextExpanded, false);
           },
         },
       }));
 
       const layout = applyLayout(decoratedNodes, visibleEdges);
-
-      const mergedNodes = layout.nodes.map((node) => {
-        const prev = prevPositions[node.id];
-        return prev
-          ? { ...node, position: prev, data: { ...node.data, isNew: false } }
-          : node;
-      });
-
-      setNodes(mergedNodes);
+      setNodes(layout.nodes);
       setEdges(layout.edges);
+      prevVisibleRef.current = visibleIds;
     },
-    [applyLayout, nodes]
+    [applyLayout]
   );
 
   const loadLatest = useCallback(async () => {
@@ -351,6 +333,8 @@ export default function HomePage() {
       setFullNodes(nodes);
       setFullEdges(edges);
       expandedRef.current = new Set();
+      prevVisibleRef.current = new Set();
+      showAllRef.current = false;
       setShowAll(false);
       setActiveDomain(project.domain);
       setDomainInput((current) => current || project.domain);
@@ -392,6 +376,8 @@ export default function HomePage() {
       setFullEdges(rawEdges);
       const collapsed = new Set<string>();
       expandedRef.current = collapsed;
+      prevVisibleRef.current = new Set();
+      showAllRef.current = false;
       setShowAll(false);
       rebuildGraph(rawNodes, rawEdges, collapsed, false);
       setActiveDomain(data.domain);
@@ -410,6 +396,7 @@ export default function HomePage() {
     if (!fullNodes.length) {
       setShowAll(next);
       expandedRef.current = new Set();
+      showAllRef.current = next;
       showStatus(next ? "Alle Ebenen sichtbar." : "Nur erste Ebene sichtbar.");
       return;
     }
@@ -417,20 +404,16 @@ export default function HomePage() {
     if (next) {
       const expandedAll = new Set(fullNodes.map((n) => n.id));
       expandedRef.current = expandedAll;
+      showAllRef.current = true;
       setShowAll(true);
-      rebuildGraph(fullNodes, fullEdges, expandedAll, true, Object.fromEntries(nodes.map((n) => [n.id, n.position])));
+      rebuildGraph(fullNodes, fullEdges, expandedAll, true);
       showStatus("Alle Ebenen sichtbar.");
     } else {
       const collapsed = new Set<string>();
       expandedRef.current = collapsed;
+      showAllRef.current = false;
       setShowAll(false);
-      rebuildGraph(
-        fullNodes,
-        fullEdges,
-        collapsed,
-        false,
-        Object.fromEntries(nodes.map((n) => [n.id, n.position]))
-      );
+      rebuildGraph(fullNodes, fullEdges, collapsed, false);
       showStatus("Nur erste Ebene sichtbar.");
     }
   };
