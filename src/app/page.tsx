@@ -12,7 +12,15 @@ import ReactFlow, {
 } from "reactflow";
 import "reactflow/dist/style.css";
 
-type FlowNode = Node<{ label: string; path?: string; isRoot?: boolean; depth?: number }>;
+type FlowNode = Node<{
+  label: string;
+  path?: string;
+  isRoot?: boolean;
+  depth?: number;
+  hasChildren?: boolean;
+  expanded?: boolean;
+  onToggle?: () => void;
+}>;
 type FlowEdge = Edge;
 
 type LatestProjectResponse = {
@@ -28,37 +36,57 @@ const toolbarPlaceholders = ["↔", "🔍", "⟳", "◇", "⚡", "≡"];
 
 const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
   const borderColor = data?.isRoot ? "#8f6cff" : "#2f6bff";
+  const showToggle = data?.hasChildren;
 
   return (
-    <div
-      className="group flex h-24 w-48 flex-col rounded-2xl bg-white px-4 py-3 shadow-[0_8px_24px_rgba(47,107,255,0.08)]"
-      style={{ border: `2px solid ${borderColor}` }}
-    >
-      <div className="flex items-center gap-1">
-        <span className="h-1.5 w-1.5 rounded-full bg-[#2f6bff]" />
-        <span className="h-1.5 w-1.5 rounded-full bg-[#2f6bff]" />
-        <span className="h-1.5 w-1.5 rounded-full bg-[#2f6bff]" />
-      </div>
-      <div className="mt-2 text-base font-semibold leading-tight text-[#1b2559]">
-        {data?.label || "Page"}
-      </div>
-      {data?.path && (
-        <div className="mt-1 text-[11px] uppercase tracking-[0.22em] text-slate-400">
-          {data.path}
+    <div className="relative">
+      <div
+        className="group flex h-24 w-48 flex-col rounded-2xl bg-white px-4 py-3 shadow-[0_8px_24px_rgba(47,107,255,0.08)]"
+        style={{ border: `2px solid ${borderColor}` }}
+      >
+        <div className="flex items-center gap-1">
+          <span className="h-1.5 w-1.5 rounded-full bg-[#2f6bff]" />
+          <span className="h-1.5 w-1.5 rounded-full bg-[#2f6bff]" />
+          <span className="h-1.5 w-1.5 rounded-full bg-[#2f6bff]" />
         </div>
+        <div className="mt-2 text-base font-semibold leading-tight text-[#1b2559]">
+          {data?.label || "Page"}
+        </div>
+        {data?.path && (
+          <div className="mt-1 text-[11px] uppercase tracking-[0.22em] text-slate-400">
+            {data.path}
+          </div>
+        )}
+        <Handle
+          type="target"
+          position={Position.Top}
+          className="!h-2 !w-2 !bg-transparent"
+          isConnectable={isConnectable}
+        />
+        <Handle
+          type="source"
+          position={Position.Bottom}
+          className="!h-2 !w-2 !bg-transparent"
+          isConnectable={isConnectable}
+        />
+      </div>
+      {showToggle && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            data?.onToggle?.();
+          }}
+          className="absolute left-1/2 top-full -mt-2 -translate-x-1/2 rounded-full bg-white px-2 py-1 text-sm leading-none text-slate-700 shadow-md ring-1 ring-slate-200 transition hover:bg-slate-50"
+        >
+          <span
+            className={`inline-block transition-transform ${
+              data?.expanded ? "rotate-180" : "rotate-0"
+            }`}
+          >
+            ▼
+          </span>
+        </button>
       )}
-      <Handle
-        type="target"
-        position={Position.Top}
-        className="!h-2 !w-2 !bg-transparent"
-        isConnectable={isConnectable}
-      />
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        className="!h-2 !w-2 !bg-transparent"
-        isConnectable={isConnectable}
-      />
     </div>
   );
 };
@@ -73,13 +101,14 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [depth, setDepth] = useState(1);
   const [depthOpen, setDepthOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [lastLevelRows, setLastLevelRows] = useState(1);
+  const [fullNodes, setFullNodes] = useState<FlowNode[]>([]);
+  const [fullEdges, setFullEdges] = useState<FlowEdge[]>([]);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [showAll, setShowAll] = useState(false);
 
   const nodeTypes = useMemo(() => ({ card: CardNode }), []);
   const hasGraph = nodes.length > 0;
   const depthOptions = useMemo(() => [1, 2, 3, 4, 5], []);
-  const lastLevelRowsOptions = useMemo(() => [1, 2, 3], []);
   const defaultEdgeOptions = useMemo(
     () => ({
       type: "step" as const,
@@ -150,61 +179,138 @@ export default function HomePage() {
         type: edge.type || "step",
       }));
 
-      // Wrap deepest level into rows if requested
-      const maxDepth =
-        layoutedNodes.reduce(
-          (acc, node) => Math.max(acc, node.data?.depth ?? 0),
-          0
-        ) || 0;
-      const deepest = layoutedNodes.filter((node) => (node.data?.depth ?? 0) === maxDepth);
-      const shouldWrap = lastLevelRows > 1 && deepest.length >= 4;
+      // Determine children per parent
+      const childrenByParent = inputEdges.reduce<Record<string, string[]>>((acc, edge) => {
+        acc[edge.source] = acc[edge.source] || [];
+        acc[edge.source].push(edge.target);
+        return acc;
+      }, {});
 
-      if (shouldWrap) {
-        const sorted = [...deepest].sort((a, b) => a.position.x - b.position.x);
-        const rows = Math.min(lastLevelRows, Math.ceil(deepest.length / 4));
-        const perRow = Math.ceil(sorted.length / rows);
-        const baseY = Math.max(...layoutedNodes.map((n) => n.position.y));
-        const minX = Math.min(...sorted.map((n) => n.position.x));
-        const maxX = Math.max(...sorted.map((n) => n.position.x));
-        const centerX = (minX + maxX) / 2;
-        const xGap = 240;
-        const yGap = 160;
+      const layouted = layoutedNodes.map((n) => ({ ...n }));
+      const edgesWithStyle = layoutedEdges.map((e) => ({ ...e }));
 
-        const wrappedIds = new Set<string>();
+      const wrappedTargets = new Set<string>();
+      const xGap = 240;
+      const yGap = 160;
 
-        for (let row = 0; row < rows; row++) {
-          const start = row * perRow;
-          const slice = sorted.slice(start, start + perRow);
-          const rowCount = slice.length;
-          const rowStartX = centerX - ((rowCount - 1) * xGap) / 2;
-          slice.forEach((node, idx) => {
-            const targetIndex = layoutedNodes.findIndex((n) => n.id === node.id);
-            if (targetIndex >= 0) {
-              layoutedNodes[targetIndex] = {
-                ...layoutedNodes[targetIndex],
-                position: {
-                  x: rowStartX + idx * xGap,
-                  y: baseY + row * yGap,
-                },
-              };
-              if (row > 0) {
-                wrappedIds.add(node.id);
-              }
-            }
-          });
-        }
+      Object.entries(childrenByParent).forEach(([parentId, childIds]) => {
+        if (childIds.length <= 4) return;
+        const parentNode = layouted.find((n) => n.id === parentId);
+        if (!parentNode) return;
 
-        const wrappedEdgeStyle = { stroke: "rgba(0,0,0,0.35)", strokeWidth: 2 };
-        layoutedEdges.forEach((edge, index) => {
-          if (wrappedIds.has(edge.target)) {
-            layoutedEdges[index] = { ...edge, style: wrappedEdgeStyle };
+        const centerX = parentNode.position.x + 100;
+        const baseY = parentNode.position.y + 200;
+        const rows = Math.ceil(childIds.length / 4);
+
+        childIds.forEach((childId, idx) => {
+          const row = Math.floor(idx / 4);
+          const col = idx % 4;
+          const rowCount =
+            row === rows - 1 && childIds.length % 4 !== 0 ? childIds.length % 4 : 4;
+          const startX = centerX - ((rowCount - 1) * xGap) / 2;
+
+          const targetIndex = layouted.findIndex((n) => n.id === childId);
+          if (targetIndex >= 0) {
+            layouted[targetIndex] = {
+              ...layouted[targetIndex],
+              position: {
+                x: startX + col * xGap - 100,
+                y: baseY + row * yGap - 60,
+              },
+            };
+            wrappedTargets.add(childId);
           }
         });
-      }
+      });
 
-      return { nodes: layoutedNodes, edges: layoutedEdges };
+      edgesWithStyle.forEach((edge, index) => {
+        if (wrappedTargets.has(edge.target)) {
+          edgesWithStyle[index] = {
+            ...edge,
+            style: { stroke: "rgba(0,0,0,0.35)", strokeWidth: 2 },
+          };
+        }
+      });
+
+      return { nodes: layouted, edges: edgesWithStyle };
     },
-    [lastLevelRows]
+    []
+  );
+
+  const depthFromNode = (node: FlowNode) => {
+    if (node.data?.isRoot) return 0;
+    const path = node.data?.path || "/";
+    if (path === "/") return 0;
+    return path.replace(/^\//, "").split("/").filter(Boolean).length;
+  };
+
+  const rebuildGraph = useCallback(
+    (srcNodes: FlowNode[], srcEdges: FlowEdge[], resetExpanded = false) => {
+      const parentMap: Record<string, string | undefined> = {};
+      const childrenMapFull: Record<string, string[]> = {};
+
+      srcEdges.forEach((edge) => {
+        parentMap[edge.target] = edge.source;
+        childrenMapFull[edge.source] = childrenMapFull[edge.source] || [];
+        childrenMapFull[edge.source].push(edge.target);
+      });
+
+      const expandedSet = resetExpanded ? new Set<string>() : expanded;
+
+      const isVisible = (nodeId: string) => {
+        if (showAll) return true;
+        const node = srcNodes.find((n) => n.id === nodeId);
+        if (!node) return false;
+        const depth = depthFromNode(node);
+        if (depth <= 1) return true;
+
+        let currentParent = parentMap[nodeId];
+        while (currentParent) {
+          if (!expandedSet.has(currentParent)) return false;
+          const parentNode = srcNodes.find((n) => n.id === currentParent);
+          const parentDepth = parentNode ? depthFromNode(parentNode) : 0;
+          if (parentDepth <= 1) return true;
+          currentParent = parentMap[currentParent];
+        }
+        return false;
+      };
+
+      const visibleNodes = srcNodes.filter((node) => isVisible(node.id));
+      const visibleIds = new Set(visibleNodes.map((n) => n.id));
+      const visibleEdges = srcEdges.filter(
+        (edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target)
+      );
+
+      const decoratedNodes = visibleNodes.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          depth: depthFromNode(node),
+          hasChildren: (childrenMapFull[node.id] || []).length > 0,
+          expanded: expandedSet.has(node.id),
+          onToggle: () => {
+            setShowAll(false);
+            setExpanded((prev) => {
+              const next = new Set(prev);
+              if (next.has(node.id)) {
+                next.delete(node.id);
+              } else {
+                next.add(node.id);
+              }
+              return next;
+            });
+          },
+        },
+      }));
+
+      const layout = applyLayout(decoratedNodes, visibleEdges);
+      setNodes(layout.nodes);
+      setEdges(layout.edges);
+      if (resetExpanded) {
+        setExpanded(expandedSet);
+      }
+    },
+    [applyLayout, expanded, showAll]
   );
 
   const loadLatest = useCallback(async () => {
@@ -217,23 +323,27 @@ export default function HomePage() {
         return;
       }
 
-      const layout = applyLayout(
-        (project.nodes as FlowNode[]) || [],
-        (project.edges as FlowEdge[]) || []
-      );
-      setNodes(layout.nodes);
-      setEdges(layout.edges);
+      const nodes = (project.nodes as FlowNode[]) || [];
+      const edges = (project.edges as FlowEdge[]) || [];
+      setFullNodes(nodes);
+      setFullEdges(edges);
       setActiveDomain(project.domain);
       setDomainInput((current) => current || project.domain);
+      rebuildGraph(nodes, edges, true);
       showStatus("Letzte gespeicherte Karte geladen.");
     } catch {
       showStatus("Konnte letzte Karte nicht laden.");
     }
-  }, [applyLayout, showStatus]);
+  }, [rebuildGraph, showStatus]);
 
   useEffect(() => {
     loadLatest();
   }, [loadLatest]);
+
+  useEffect(() => {
+    if (!fullNodes.length) return;
+    rebuildGraph(fullNodes, fullEdges, false);
+  }, [fullNodes, fullEdges, expanded, showAll, rebuildGraph]);
 
   const handleCrawl = async () => {
     if (!domainInput.trim()) {
@@ -256,9 +366,12 @@ export default function HomePage() {
         throw new Error(data?.error || "Fehler beim Crawlen.");
       }
 
-      const layout = applyLayout((data.nodes as FlowNode[]) || [], (data.edges as FlowEdge[]) || []);
-      setNodes(layout.nodes);
-      setEdges(layout.edges);
+      const rawNodes = (data.nodes as FlowNode[]) || [];
+      const rawEdges = (data.edges as FlowEdge[]) || [];
+      setFullNodes(rawNodes);
+      setFullEdges(rawEdges);
+      setExpanded(new Set());
+      rebuildGraph(rawNodes, rawEdges, true);
       setActiveDomain(data.domain);
       showStatus(`Struktur gespeichert (Tiefe ${depth}, SQLite).`);
     } catch (error) {
@@ -279,6 +392,17 @@ export default function HomePage() {
     []
   );
 
+  const toggleShowAll = () => {
+    setShowAll((prev) => {
+      const next = !prev;
+      if (!next) {
+        setExpanded(new Set());
+      }
+      showStatus(next ? "Alle Ebenen sichtbar." : "Nur erste Ebene sichtbar.");
+      return next;
+    });
+  };
+
   return (
     <div className="relative h-screen w-full overflow-hidden bg-[#f9fbff] text-slate-900">
       {statusMessage && (
@@ -289,50 +413,6 @@ export default function HomePage() {
         >
           <div className="pointer-events-auto rounded-full bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-md ring-1 ring-slate-200">
             {statusMessage}
-          </div>
-        </div>
-      )}
-
-      {settingsOpen && (
-        <div
-          className="fixed inset-0 z-20 bg-black/10 backdrop-blur-[1px]"
-          onClick={() => setSettingsOpen(false)}
-        >
-          <div
-            className="absolute right-6 top-16 w-72 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-slate-800">Settings</p>
-                <p className="text-xs text-slate-500">Zeilen in letzter Ebene</p>
-              </div>
-              <button
-                onClick={() => setSettingsOpen(false)}
-                className="rounded-full px-3 py-1 text-sm font-semibold text-slate-500 hover:bg-slate-100"
-              >
-                ×
-              </button>
-            </div>
-            <div className="mt-3 flex items-center gap-2">
-              {lastLevelRowsOptions.map((option) => (
-                <button
-                  key={option}
-                  onClick={() => setLastLevelRows(option)}
-                  className={`flex-1 rounded-full border px-3 py-2 text-sm font-semibold transition ${
-                    option === lastLevelRows
-                      ? "border-slate-900 bg-slate-900 text-white"
-                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
-                  }`}
-                >
-                  {option} Zeile{option > 1 ? "n" : ""}
-                </button>
-              ))}
-            </div>
-            <p className="mt-3 text-[11px] leading-snug text-slate-500">
-              Ab 4 Karten in der letzten Ebene werden bei mehr als 1 Zeile die Karten
-              umgebrochen; Kanten werden dabei schwarz-transparent gezeichnet.
-            </p>
           </div>
         </div>
       )}
@@ -360,8 +440,17 @@ export default function HomePage() {
           🔍
         </button>
         <button
+          className={`rounded-full px-3 py-2 text-lg shadow-sm ring-1 ring-slate-100 ${
+            showAll ? "bg-slate-900 text-white" : "bg-white text-slate-700"
+          }`}
+          onClick={toggleShowAll}
+          aria-label="Alle Ebenen umschalten"
+        >
+          🖥
+        </button>
+        <button
           className="rounded-full bg-white px-3 py-2 text-lg shadow-sm ring-1 ring-slate-100"
-          onClick={() => setSettingsOpen(true)}
+          onClick={() => showStatus("Settings folgen bald.")}
           aria-label="Settings"
         >
           ☰
