@@ -12,7 +12,7 @@ import ReactFlow, {
 } from "reactflow";
 import "reactflow/dist/style.css";
 
-type FlowNode = Node<{ label: string; path?: string; isRoot?: boolean }>;
+type FlowNode = Node<{ label: string; path?: string; isRoot?: boolean; depth?: number }>;
 type FlowEdge = Edge;
 
 type LatestProjectResponse = {
@@ -73,10 +73,13 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [depth, setDepth] = useState(1);
   const [depthOpen, setDepthOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [lastLevelRows, setLastLevelRows] = useState(1);
 
   const nodeTypes = useMemo(() => ({ card: CardNode }), []);
   const hasGraph = nodes.length > 0;
   const depthOptions = useMemo(() => [1, 2, 3, 4, 5], []);
+  const lastLevelRowsOptions = useMemo(() => [1, 2, 3], []);
   const defaultEdgeOptions = useMemo(
     () => ({
       type: "step" as const,
@@ -102,44 +105,107 @@ export default function HomePage() {
     };
   }, [statusMessage]);
 
-  const applyLayout = useCallback((inputNodes: FlowNode[], inputEdges: FlowEdge[]) => {
-    const g = new dagre.graphlib.Graph();
-    g.setDefaultEdgeLabel(() => ({}));
-    g.setGraph({
-      rankdir: "TB",
-      nodesep: 40,
-      ranksep: 140,
-      marginx: 60,
-      marginy: 40,
-    });
+  const applyLayout = useCallback(
+    (inputNodes: FlowNode[], inputEdges: FlowEdge[]) => {
+      const g = new dagre.graphlib.Graph();
+      g.setDefaultEdgeLabel(() => ({}));
+      g.setGraph({
+        rankdir: "TB",
+        nodesep: 40,
+        ranksep: 140,
+        marginx: 60,
+        marginy: 40,
+      });
 
-    inputNodes.forEach((node) => {
-      g.setNode(node.id, { width: 200, height: 120 });
-    });
-    inputEdges.forEach((edge) => {
-      g.setEdge(edge.source, edge.target);
-    });
+      inputNodes.forEach((node) => {
+        g.setNode(node.id, { width: 200, height: 120 });
+      });
+      inputEdges.forEach((edge) => {
+        g.setEdge(edge.source, edge.target);
+      });
 
-    dagre.layout(g);
+      dagre.layout(g);
 
-    const layoutedNodes = inputNodes.map((node) => {
-      const pos = g.node(node.id);
-      return {
-        ...node,
-        position: {
-          x: pos.x - 100,
-          y: pos.y - 60,
-        },
+      const getDepth = (node: FlowNode) => {
+        if (node.data?.isRoot) return 0;
+        const path = node.data?.path || "/";
+        const segs = path === "/" ? [] : path.replace(/^\//, "").split("/").filter(Boolean);
+        return segs.length;
       };
-    });
 
-    const layoutedEdges = inputEdges.map((edge) => ({
-      ...edge,
-      type: edge.type || "step",
-    }));
+      const layoutedNodes = inputNodes.map((node) => {
+        const pos = g.node(node.id);
+        return {
+          ...node,
+          position: {
+            x: pos.x - 100,
+            y: pos.y - 60,
+          },
+          data: { ...node.data, depth: getDepth(node) },
+        };
+      });
 
-    return { nodes: layoutedNodes, edges: layoutedEdges };
-  }, []);
+      const layoutedEdges = inputEdges.map((edge) => ({
+        ...edge,
+        type: edge.type || "step",
+      }));
+
+      // Wrap deepest level into rows if requested
+      const maxDepth =
+        layoutedNodes.reduce(
+          (acc, node) => Math.max(acc, node.data?.depth ?? 0),
+          0
+        ) || 0;
+      const deepest = layoutedNodes.filter((node) => (node.data?.depth ?? 0) === maxDepth);
+      const shouldWrap = lastLevelRows > 1 && deepest.length >= 4;
+
+      if (shouldWrap) {
+        const sorted = [...deepest].sort((a, b) => a.position.x - b.position.x);
+        const rows = Math.min(lastLevelRows, Math.ceil(deepest.length / 4));
+        const perRow = Math.ceil(sorted.length / rows);
+        const baseY = Math.max(...layoutedNodes.map((n) => n.position.y));
+        const minX = Math.min(...sorted.map((n) => n.position.x));
+        const maxX = Math.max(...sorted.map((n) => n.position.x));
+        const centerX = (minX + maxX) / 2;
+        const xGap = 240;
+        const yGap = 160;
+
+        const wrappedIds = new Set<string>();
+
+        for (let row = 0; row < rows; row++) {
+          const start = row * perRow;
+          const slice = sorted.slice(start, start + perRow);
+          const rowCount = slice.length;
+          const rowStartX = centerX - ((rowCount - 1) * xGap) / 2;
+          slice.forEach((node, idx) => {
+            const targetIndex = layoutedNodes.findIndex((n) => n.id === node.id);
+            if (targetIndex >= 0) {
+              layoutedNodes[targetIndex] = {
+                ...layoutedNodes[targetIndex],
+                position: {
+                  x: rowStartX + idx * xGap,
+                  y: baseY + row * yGap,
+                },
+              };
+              if (row > 0) {
+                wrappedIds.add(node.id);
+              }
+            }
+          });
+        }
+
+        const wrappedEdgeStyle = { stroke: "rgba(0,0,0,0.35)", strokeWidth: 2 };
+        layoutedEdges.forEach((edge, index) => {
+          if (wrappedIds.has(edge.target)) {
+            layoutedEdges[index] = { ...edge, style: wrappedEdgeStyle };
+          }
+        });
+      }
+
+      return { nodes: layoutedNodes, edges: layoutedEdges };
+    },
+    [lastLevelRows]
+  );
 
   const loadLatest = useCallback(async () => {
     try {
@@ -227,6 +293,50 @@ export default function HomePage() {
         </div>
       )}
 
+      {settingsOpen && (
+        <div
+          className="fixed inset-0 z-20 bg-black/10 backdrop-blur-[1px]"
+          onClick={() => setSettingsOpen(false)}
+        >
+          <div
+            className="absolute right-6 top-16 w-72 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-800">Settings</p>
+                <p className="text-xs text-slate-500">Zeilen in letzter Ebene</p>
+              </div>
+              <button
+                onClick={() => setSettingsOpen(false)}
+                className="rounded-full px-3 py-1 text-sm font-semibold text-slate-500 hover:bg-slate-100"
+              >
+                ×
+              </button>
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              {lastLevelRowsOptions.map((option) => (
+                <button
+                  key={option}
+                  onClick={() => setLastLevelRows(option)}
+                  className={`flex-1 rounded-full border px-3 py-2 text-sm font-semibold transition ${
+                    option === lastLevelRows
+                      ? "border-slate-900 bg-slate-900 text-white"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  {option} Zeile{option > 1 ? "n" : ""}
+                </button>
+              ))}
+            </div>
+            <p className="mt-3 text-[11px] leading-snug text-slate-500">
+              Ab 4 Karten in der letzten Ebene werden bei mehr als 1 Zeile die Karten
+              umgebrochen; Kanten werden dabei schwarz-transparent gezeichnet.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="absolute left-6 top-6 flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#f0e8ff] text-xl">
           🐙
@@ -249,8 +359,12 @@ export default function HomePage() {
         <button className="rounded-full bg-white px-3 py-2 text-lg shadow-sm ring-1 ring-slate-100">
           🔍
         </button>
-        <button className="rounded-full bg-white px-3 py-2 text-lg shadow-sm ring-1 ring-slate-100">
-          😊
+        <button
+          className="rounded-full bg-white px-3 py-2 text-lg shadow-sm ring-1 ring-slate-100"
+          onClick={() => setSettingsOpen(true)}
+          aria-label="Settings"
+        >
+          ☰
         </button>
       </div>
 

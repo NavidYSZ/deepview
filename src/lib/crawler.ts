@@ -50,6 +50,16 @@ function parentPath(path: string) {
   return `/${segs.slice(0, -1).join("/")}`;
 }
 
+function stripWww(host: string) {
+  return host.replace(/^www\./i, "");
+}
+
+function matchesHost(host: string, rootHost: string) {
+  const a = stripWww(host.toLowerCase());
+  const b = stripWww(rootHost.toLowerCase());
+  return a === b;
+}
+
 async function fetchSitemapUrls(root: URL): Promise<URL[]> {
   const candidates = [new URL("/sitemap.xml", root), new URL("/sitemap_index.xml", root)];
   const urls: URL[] = [];
@@ -69,7 +79,7 @@ async function fetchSitemapUrls(root: URL): Promise<URL[]> {
           const u = new URL(loc);
           u.hash = "";
           u.search = "";
-          if (u.hostname === root.hostname) {
+          if (matchesHost(u.hostname, root.hostname)) {
             urls.push(u);
           }
         } catch {
@@ -85,43 +95,19 @@ async function fetchSitemapUrls(root: URL): Promise<URL[]> {
   return urls.slice(0, MAX_PAGES);
 }
 
-async function fetchPageInfo(url: URL): Promise<{ title?: string; links: URL[] }> {
-  const res = await fetch(url.toString(), {
-    headers: { "User-Agent": "DeepviewCrawler/0.1 (+https://example.com)" },
-  });
-  if (!res.ok) {
-    return { links: [] };
-  }
-  const html = await res.text();
-  const $ = load(html);
-  const title = $("title").first().text().trim() || undefined;
-  const links: URL[] = [];
-  $("a[href]").each((_, el) => {
-    const href = $(el).attr("href");
-    try {
-      const u = new URL(href || "", url);
-      u.hash = "";
-      u.search = "";
-      links.push(u);
-    } catch {
-      // ignore
-    }
-  });
-  return { title, links };
-}
-
 export async function crawlDomain(
   domain: string,
   maxDepth: number = 1
 ): Promise<CrawlResult> {
   const normalized = normalizeDomain(domain);
   const rootUrl = new URL(normalized);
+  let rootHost = rootUrl.hostname;
   const depthLimit = Math.min(Math.max(1, Math.floor(maxDepth)), MAX_DEPTH);
 
   const pages = new Map<string, PageInfo>();
 
   const addPage = (url: URL, title?: string) => {
-    if (url.hostname !== rootUrl.hostname) return;
+    if (!matchesHost(url.hostname, rootHost)) return;
     const path = cleanPath(url);
     pages.set(path, { path, url, title: title || pages.get(path)?.title });
   };
@@ -150,11 +136,42 @@ export async function crawlDomain(
     processed.add(path);
 
     try {
-      const { title, links } = await fetchPageInfo(current);
+      const res = await fetch(current.toString(), {
+        headers: { "User-Agent": "DeepviewCrawler/0.1 (+https://example.com)" },
+      });
+      if (!res.ok) {
+        continue;
+      }
+
+      try {
+        const finalHost = new URL(res.url).hostname;
+        if (matchesHost(finalHost, rootHost)) {
+          rootHost = finalHost;
+        }
+      } catch {
+        // ignore
+      }
+
+      const html = await res.text();
+      const $ = load(html);
+      const title = $("title").first().text().trim() || undefined;
+      const links: URL[] = [];
+      $("a[href]").each((_, el) => {
+        const href = $(el).attr("href");
+        try {
+          const u = new URL(href || "", current);
+          u.hash = "";
+          u.search = "";
+          links.push(u);
+        } catch {
+          // ignore
+        }
+      });
+
       addPage(current, title);
 
       for (const link of links) {
-        if (link.hostname !== rootUrl.hostname) continue;
+        if (!matchesHost(link.hostname, rootHost)) continue;
         const childPath = cleanPath(link);
         const childDepth = pathSegments(childPath).length;
         if (childDepth > depthLimit) continue;
@@ -234,7 +251,7 @@ export async function crawlDomain(
   });
 
   return {
-    domain: rootUrl.hostname,
+    domain: rootHost,
     nodes: flowNodes,
     edges: flowEdges,
   };
