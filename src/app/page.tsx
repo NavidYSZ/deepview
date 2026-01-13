@@ -21,6 +21,8 @@ type FlowNode = Node<{
   expanded?: boolean;
   onToggle?: () => void;
   isNew?: boolean;
+  statusCode?: number;
+  unreachable?: boolean;
 }>;
 type FlowEdge = Edge;
 
@@ -36,7 +38,8 @@ type LatestProjectResponse = {
 const toolbarPlaceholders = ["↔", "🔍", "⟳", "◇", "⚡", "≡"];
 
 const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
-  const borderColor = data?.isRoot ? "#8f6cff" : "#2f6bff";
+  const isError = data?.unreachable || (data?.statusCode ?? 200) >= 400;
+  const borderColor = isError ? "#ef4444" : data?.isRoot ? "#8f6cff" : "#2f6bff";
   const showToggle = data?.hasChildren;
 
   return (
@@ -51,6 +54,11 @@ const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
           <span className="h-1.5 w-1.5 rounded-full bg-[#2f6bff]" />
           <span className="h-1.5 w-1.5 rounded-full bg-[#2f6bff]" />
           <span className="h-1.5 w-1.5 rounded-full bg-[#2f6bff]" />
+          {isError && (
+            <span className="ml-auto flex h-5 w-5 items-center justify-center rounded-full bg-[#ef4444] text-[10px] font-bold text-white">
+              !
+            </span>
+          )}
         </div>
         <div className="mt-2 text-base font-semibold leading-tight text-[#1b2559]">
           {data?.label || "Page"}

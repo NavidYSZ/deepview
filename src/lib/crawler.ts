@@ -1,13 +1,21 @@
 import { load } from "cheerio";
 import type { Edge, Node } from "reactflow";
 
-type FlowNode = Node<{ label: string; path?: string; isRoot?: boolean }>;
+type FlowNode = Node<{
+  label: string;
+  path?: string;
+  isRoot?: boolean;
+  statusCode?: number;
+  unreachable?: boolean;
+}>;
 type FlowEdge = Edge;
 
 type PageInfo = {
   path: string;
   url: URL;
   title?: string;
+  statusCode?: number;
+  unreachable?: boolean;
 };
 
 export type CrawlResult = {
@@ -109,7 +117,14 @@ export async function crawlDomain(
   const addPage = (url: URL, title?: string) => {
     if (!matchesHost(url.hostname, rootHost)) return;
     const path = cleanPath(url);
-    pages.set(path, { path, url, title: title || pages.get(path)?.title });
+    const existing = pages.get(path);
+    pages.set(path, {
+      path,
+      url,
+      title: title || existing?.title,
+      statusCode: existing?.statusCode,
+      unreachable: existing?.unreachable,
+    });
   };
 
   // Always include root
@@ -140,6 +155,10 @@ export async function crawlDomain(
         headers: { "User-Agent": "DeepviewCrawler/0.1 (+https://example.com)" },
       });
       if (!res.ok) {
+        const info = pages.get(path);
+        if (info) {
+          pages.set(path, { ...info, statusCode: res.status, unreachable: true });
+        }
         continue;
       }
 
@@ -185,6 +204,26 @@ export async function crawlDomain(
   }
 
   // Build edges by path hierarchy
+  // Ensure ancestor placeholders exist
+  const ensureAncestors = (p: string) => {
+    let parent = parentPath(p);
+    while (parent) {
+      if (!pages.has(parent)) {
+        const url = new URL(parent, rootUrl);
+        pages.set(parent, {
+          path: parent,
+          url,
+          title: parent === "/" ? rootHost : parent.split("/").pop() || parent,
+          statusCode: 404,
+          unreachable: true,
+        });
+      }
+      parent = parentPath(parent);
+    }
+  };
+
+  Array.from(pages.keys()).forEach((p) => ensureAncestors(p));
+
   const flowNodes: FlowNode[] = [];
   const flowEdges: FlowEdge[] = [];
 
@@ -232,6 +271,8 @@ export async function crawlDomain(
         label: label.length > 40 ? `${label.slice(0, 40)}…` : label,
         path,
         isRoot: depth === 0,
+        statusCode: info.statusCode,
+        unreachable: info.unreachable,
       },
       position: { x: 0, y: 0 },
       type: "card",
