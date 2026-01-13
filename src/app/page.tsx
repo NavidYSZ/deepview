@@ -184,6 +184,7 @@ export default function HomePage() {
             y: pos.y - 60,
           },
           data: { ...node.data, depth: getDepth(node) },
+          className: [node.className, "flow-card"].filter(Boolean).join(" "),
         };
       });
 
@@ -509,7 +510,7 @@ export default function HomePage() {
         )}
       </div>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-24 mx-auto flex max-w-2xl items-center justify-center px-4">
+      <div className="pointer-events-none absolute inset-x-0 bottom-12 mx-auto flex max-w-2xl items-center justify-center px-4">
         <div className="pointer-events-auto flex w-full items-center gap-3 rounded-full border border-slate-200 bg-white px-4 py-3 shadow-xl">
           <input
             value={domainInput}
