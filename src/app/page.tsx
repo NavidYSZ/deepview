@@ -46,7 +46,7 @@ const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
     <div className="relative">
       <div
         className={`group flex h-24 w-48 flex-col rounded-2xl bg-white px-4 py-3 shadow-[0_8px_24px_rgba(47,107,255,0.08)] ${
-          data?.isNew ? "animate-[fade-in-up_0.22s_ease]" : ""
+          data?.isNew ? "animate-[fade-in-up_0.24s_ease]" : ""
         }`}
         style={{ border: `2px solid ${borderColor}` }}
       >
