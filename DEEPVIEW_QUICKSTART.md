@@ -8,23 +8,26 @@
 - Persist DB: mount/keep `data.sqlite` in project root.
 
 ## APIs to Know
-- `POST /api/crawl` — Body `{ domain: string }` → crawls depth 1, saves to SQLite, returns `{ domain, nodes, edges }`.
-- `GET /api/projects/latest` — Returns last saved graph or `project: null`.
-  - Crawl depth uses URL path depth (not click graph); sitemap is ingested when present.
+- `GET /api/projects` — Projektliste.
+- `POST /api/projects` — Body `{ name, domain }` → legt Projekt + Primärdomain an.
+- `GET /api/projects/{slug}` — Projektdetails + letzter Crawler-Snapshot (nodes/edges).
+- `POST /api/projects/{slug}/crawl` — Body `{ domain?, depth? }` → crawlt, speichert Snapshot, liefert `{ nodes, edges }`.
+- `GET /api/projects/{slug}/snapshots?source=crawler` — Snapshot-Metadaten.
+- Compat: `POST /api/crawl` und `GET /api/projects/latest` bleiben als Fallback.
 
 ## Key Files
-- UI: `src/app/page.tsx` (React Flow canvas, crawl/load actions, card node).
-- Crawler: `src/lib/crawler.ts` (depth-1, same-host links only).
-- DB: `src/lib/db.ts` (better-sqlite3 setup + helpers).
-- API routes: `src/app/api/crawl/route.ts`, `src/app/api/projects/latest/route.ts`.
+- UI: `src/app/page.tsx` (Project Switcher, React Flow canvas, crawl actions, card node).
+- Crawler: `src/lib/crawler.ts` (depth 1–5, same-host links only).
+- DB: `src/lib/db.ts` (project/domain/snapshot schema + helpers, legacy migration).
+- API routes: `src/app/api/projects/*`, `src/app/api/crawl/route.ts` (compat), `src/app/api/projects/latest/route.ts` (compat).
 - Styles: `src/app/globals.css`.
 
 ## Behavior Snapshot
-- On load: auto-fetch latest project; status pill indicates result.
-- Crawl: posts domain, normalizes to root, builds nodes/edges from URL path hierarchy (with sitemap support), saves automatically.
-- Visibility: only depth 0–1 shown by default; ▼ toggles deeper nodes; 🖥 shows all.
+- On load: fetch projects list; auto-select first project; status pill indicates result.
+- Crawl: posts project-scoped domain/depth, normalizes to root, builds nodes/edges from URL path hierarchy (with sitemap support), saves snapshot automatically.
+- Visibility: depth 0–1 shown by default; ▼ toggles deeper nodes; 🖥 shows all.
 - Graph: custom `card` nodes, Dagre layout; wrapping of >4 children only for depth ≥2; edges to wrapped children are black/transparent.
-- Placeholders: toolbar/save buttons are non-functional; crawl + load are functional.
+- Placeholders: toolbar/save buttons are non-functional; crawl + load/refresh are functional.
 
 ## Deployment (Coolify / Nixpacks)
 - Install: `npm install`

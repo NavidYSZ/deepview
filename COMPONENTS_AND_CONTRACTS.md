@@ -1,77 +1,70 @@
 # Components & Contracts Cheat Sheet
 
-Goal: Full snapshot of what exists, what it consumes/produces, and where it’s used so a fresh LLM can continue without prior context.
+Goal: Snapshot of the moving parts (UI, crawler, DB, APIs, contracts) for project-aware Deepview.
 
 ## UI Components (src/app/page.tsx)
 - **HomePage (default export)**
-  - Inputs: data from API (`/api/projects/latest`, `/api/crawl`), local state (domain input, depth, showAll), expand set (ref).
-  - Outputs: React Flow nodes/edges (visible subset), API calls on crawl/load, status messages.
-  - Uses: React Flow (`nodes`, `edges`, `nodeTypes`, `defaultEdgeOptions`, `Background`), Dagre layout helper, expand/collapse logic, display toggle (🖥).
-  - Behavior: On load fetches latest project; crawl posts domain/depth and rebuilds graph; only depth 0–1 visible by default; ▼ toggles deeper nodes; 🖥 shows all; status pill shows transient messages; animation for newly shown cards.
+  - Inputs: project list/detail from API (`/api/projects`, `/api/projects/{slug}`, `/api/projects/{slug}/crawl`), local state (domain input, depth, showAll, expanded set via refs).
+  - Outputs: React Flow nodes/edges (visible subset), project selection, crawl actions, status pill messages.
+  - Behavior: On load fetches project list; auto-selects first project; Project Switcher (top-left) to change/add projects; Crawl posts to project-scoped endpoint; only depth 0–1 visible by default; ▼ toggles deeper nodes; 🖥 shows all; status pill is transient; fade-in animation for newly visible cards. Depth picker (1–5) + Refresh button to reload project.
 
 - **CardNode (React Flow node type `card`)**
-  - Props/Data: `{ label, path?, isRoot?, depth?, hasChildren?, expanded?, isNew?, onToggle? }`.
-  - Outputs: Visual card; optional ▼ button that calls `onToggle` (stopPropagation).
-  - Styling: Border color root vs child, triple dots header, label/path text, fade-in on `isNew`.
+  - Props/Data: `{ label, path?, isRoot?, depth?, hasChildren?, expanded?, isNew?, statusCode?, unreachable?, onToggle? }`.
+  - Outputs: Card with optional ▼ button (stopPropagation) and error badge on unreachable/4xx+.
+  - Styling: Root vs child border color, triple dots header, label/path text, fade-in on `isNew`.
 
 ## Layout / State Helpers (src/app/page.tsx)
-- **applyLayout** (callback)
-  - Inputs: visible nodes/edges with data.depth.
-  - Outputs: positioned nodes/edges using Dagre; wraps children (>4) only for parents at depth ≥2; wrapped-child edges get black/transparent stroke.
-  - Notes: Root/direct children never wrap.
-
-- **rebuildGraph** (callback)
-  - Inputs: full nodes/edges, `expandedSet`, `viewAll`.
-  - Outputs: visible nodes/edges decorated with data flags (`hasChildren`, `expanded`, `isNew`), then laid out.
-  - Logic: Visibility = always depth 0–1; deeper only if all parents expanded unless `viewAll`. `isNew` set when node wasn’t visible in previous pass (prevVisibleRef).
-  - State handling: Uses refs (`expandedRef`, `showAllRef`, `prevVisibleRef`) to avoid recursive rebuilds/flackern.
+- **applyLayout**: Dagre layout; wraps children (>4) only for parents at depth ≥2; wrapped-child edges styled black/transparent; root/direct children never wrap.
+- **rebuildGraph**: Filters visibility (depth 0–1 always; deeper only if parents expanded unless viewAll); decorates nodes with `hasChildren/expanded/isNew`; triggers layout; uses refs (`expandedRef`, `showAllRef`, `prevVisibleRef`) to avoid flicker and recursive rebuilds.
 
 ## Crawler (src/lib/crawler.ts)
-- **normalizeDomain(input: string)** → `string`
+- **normalizeDomain(input: string)** → `https://host`
   - Ensures https://, strips hash/search, pathname `/`, trims trailing slash.
-- **crawlDomain(domain: string, maxDepth?: number = 1)** → `CrawlResult`
-  - Inputs: domain (may lack protocol), depth 1–5.
-  - Process:
-    - Normalize domain; follow redirect host; host match ignores leading `www.`.
-    - Try `/sitemap.xml` and `/sitemap_index.xml`; ingest same-host URLs (MAX_PAGES=80).
-    - Fetch pages up to depth limit (by URL path segments) and page cap; same-host only.
-    - Titles from `<title>`; fallback last path segment/hostname; truncate 40 chars.
-    - Hierarchy from path prefixes: parent of `/a/b` is `/a`; root `/` not added as child.
-  - Outputs: `{ domain: host, nodes: FlowNode[], edges: FlowEdge[] }`
-    - Node ids: `"root"` or `"node-{normalizedPath}"`; Node data: `{ label, path, isRoot?, depth?, hasChildren? }`.
-    - Edge ids: `e-{parent}-{child}`, type `step`, blue stroke.
-  - Error: Throws on fetch failures; caller handles.
+- **crawlDomain(domain: string, maxDepth = 1)** → `{ domain, nodes, edges }`
+  - Depth clamp 1–5; same-host only; sitemap ingest (`/sitemap.xml` or `/sitemap_index.xml`, MAX_PAGES=80).
+  - Titles from `<title>`; fallback last path segment/hostname; truncate 40 chars.
+  - Path hierarchy: parent `/a/b` -> `/a`; root `/` not added as child.
+  - Nodes include `statusCode` + `unreachable` when fetch fails/4xx+.
 
-## Persistence (src/lib/db.ts)
-- DB file: `data.sqlite` in project root; WAL mode.
-- Schema: `projects(id PK, domain TEXT, nodes TEXT, edges TEXT, createdAt TEXT)`.
-- **saveProject(domain, nodes, edges)**: Inserts JSON-stringified nodes/edges with timestamp.
-- **getLatestProject()**: Returns `{ domain, nodes, edges, createdAt } | null`.
+## Persistence Layer (src/lib/db.ts)
+- DB: `data.sqlite` (WAL).
+- Tables: `projects`, `domains`, `project_features`, `snapshots`, `snapshot_blobs`, `pages`, `metrics`, `events`.
+  - Snapshots store meta + payload JSON; pages table is normalized (path/depth/title/status).
+  - Legacy migration: old `projects` table is renamed `projects_legacy`; latest row imported as project+snapshot.
+- Helpers:
+  - `createProject(name, domain, slug?, settings?)`
+  - `listProjects()`
+  - `getProjectBySlug(slug)`
+  - `findProjectByHostname(hostname)`
+  - `ensureDomain(projectId, hostname, makePrimary?)`
+  - `ensureFeature(projectId, feature, config?)`
+  - `saveSnapshot(projectId, domainId, source, schemaVersion, meta, payload)`
+  - `getLatestSnapshotWithPayload(projectId, source)`
+  - `listSnapshots(projectId, source?)`
+  - `upsertPagesFromNodes(projectId, domainId, snapshotId, nodes)`
 
 ## API Routes
-- **POST /api/crawl** (`src/app/api/crawl/route.ts`)
-  - Body: `{ domain: string, depth?: number }`
-  - Success: `200 { domain, nodes, edges }` (also saves to SQLite).
-  - Errors: `400 { error }` missing domain; `500 { error }` on crawl failure.
-- **GET /api/projects/latest** (`src/app/api/projects/latest/route.ts`)
-  - Success: `200 { project: { domain, nodes, edges, createdAt } | null }`
+- **GET /api/projects** — Projektliste mit Primärdomain + letztem Snapshot-Stempel.
+- **POST /api/projects** — Body `{ name, domain, slug?, settings? }` → `{ project, domain }`.
+- **GET /api/projects/{slug}** — `{ project, domains, features, latestSnapshot? }` (Crawler payload inkl. nodes/edges).
+- **POST /api/projects/{slug}/crawl** — Body `{ domain?, depth? }` → `{ project, domain, snapshot, nodes, edges }` + pages upsert.
+- **GET /api/projects/{slug}/snapshots?source=crawler** — Snapshot-Metadaten.
+- **Compat:** `POST /api/crawl` auto-creates/finds project by domain and stores snapshot; `GET /api/projects/latest` returns first available crawler snapshot if any.
 
 ## Data Contracts
-- **FlowNode.data**
-  - Fields: `label: string; path?: string; isRoot?: boolean; depth?: number; hasChildren?: boolean; expanded?: boolean; isNew?: boolean; onToggle?: () => void`
-  - Type: React Flow node type `"card"`.
-- **FlowEdge**
-  - Fields: `id: string; source: string; target: string; type?: "step"; style?: stroke settings`
-  - Default edge options: step, blue stroke; wrapped children: black/transparent stroke.
-- **SQLite row**
-  - `{ id, domain, nodes (JSON), edges (JSON), createdAt }`
+- **FlowNode.data**: `{ label: string; path?: string; isRoot?: boolean; depth?: number; hasChildren?: boolean; expanded?: boolean; isNew?: boolean; statusCode?: number; unreachable?: boolean; onToggle?: () => void }`
+- **FlowEdge**: `{ id: string; source: string; target: string; type?: "step"; style?: {...} }`
+- **Project**: `{ id, name, slug, settings, createdAt, updatedAt }`
+- **Domain**: `{ id, projectId, hostname, isPrimary, createdAt }`
+- **Snapshot**: `{ id, projectId, domainId, source, schemaVersion, meta, createdAt }`
+- **Snapshot payload (crawler)**: `{ domain: string; nodes: FlowNode[]; edges: FlowEdge[] }`
 
 ## Behavior Defaults / Flags
 - Visible by default: depths 0–1.
-- Show All (🖥): toggles `showAllRef`; when on, all nodes visible; when off, expanded set reset.
+- Show All (🖥): sets `showAllRef`, expands all nodes; toggling off collapses to depth 0–1.
 - Expand toggle (▼): toggles parent id in `expandedRef`, rebuilds visible graph.
-- Wrapping: only for parents depth ≥2 with >4 visible children; wrap rows of 4; edges to wrapped children darkened.
-- Animation: `fade-in-up` applied to nodes newly visible.
+- Wrapping: parents depth ≥2 with >4 visible children wrap into rows of 4; wrapped edges darkened.
+- Animation: `fade-in-up` for newly visible nodes.
 
-## Known Fixes (see KNOWN_BUGS_AND_FIXES.md)
-- Flackern on expand/display resolved by using refs for expanded/showAll and single rebuild per action; no position mixing.
+## Known Fixes
+- Flackern auf Expand/Display gelöst durch refs + single rebuild (siehe `KNOWN_BUGS_AND_FIXES.md`).

@@ -26,13 +26,72 @@ type FlowNode = Node<{
 }>;
 type FlowEdge = Edge;
 
-type LatestProjectResponse = {
-  project: {
-    domain: string;
-    nodes: FlowNode[];
-    edges: FlowEdge[];
-    createdAt: string;
-  } | null;
+type Project = {
+  id: number;
+  name: string;
+  slug: string;
+  settings: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type Domain = {
+  id: number;
+  projectId: number;
+  hostname: string;
+  isPrimary: boolean;
+  createdAt: string;
+};
+
+type ProjectFeature = {
+  projectId: number;
+  feature: string;
+  enabled: boolean;
+  config: Record<string, unknown>;
+};
+
+type Snapshot = {
+  id: number;
+  projectId: number;
+  domainId: number | null;
+  source: string;
+  schemaVersion: number;
+  meta: Record<string, unknown>;
+  createdAt: string;
+};
+
+type SnapshotPayload = {
+  snapshot: Snapshot;
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+  domain: string;
+};
+
+type ProjectSummary = {
+  project: Project;
+  primaryDomain?: string;
+  latestSnapshot?: { id: number; source: string; createdAt: string };
+};
+
+type ProjectsResponse = {
+  projects: ProjectSummary[];
+};
+
+type ProjectDetailResponse = {
+  project: Project;
+  domains: Domain[];
+  features: ProjectFeature[];
+  latestSnapshot?: SnapshotPayload | null;
+  error?: string;
+};
+
+type CrawlResponse = {
+  project: Project;
+  domain: Domain;
+  snapshot: Snapshot;
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+  error?: string;
 };
 
 const toolbarPlaceholders = ["↔", "🔍", "⟳", "◇", "⚡", "≡"];
@@ -110,10 +169,18 @@ export default function HomePage() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusVisible, setStatusVisible] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingProjects, setLoadingProjects] = useState(false);
+  const [loadingProject, setLoadingProject] = useState(false);
   const [depth, setDepth] = useState(1);
   const [depthOpen, setDepthOpen] = useState(false);
   const [fullNodes, setFullNodes] = useState<FlowNode[]>([]);
   const [fullEdges, setFullEdges] = useState<FlowEdge[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [activeProject, setActiveProject] = useState<Project | null>(null);
+  const [domains, setDomains] = useState<Domain[]>([]);
+  const [features, setFeatures] = useState<ProjectFeature[]>([]);
+  const [activeSnapshot, setActiveSnapshot] = useState<Snapshot | null>(null);
   const expandedRef = useRef<Set<string>>(new Set());
   const showAllRef = useRef(false);
   const [showAll, setShowAll] = useState(false);
@@ -193,7 +260,6 @@ export default function HomePage() {
         type: edge.type || "step",
       }));
 
-      // Determine children per parent
       const childrenByParent = inputEdges.reduce<Record<string, string[]>>((acc, edge) => {
         acc[edge.source] = acc[edge.source] || [];
         acc[edge.source].push(edge.target);
@@ -212,7 +278,6 @@ export default function HomePage() {
         const parentNode = layouted.find((n) => n.id === parentId);
         if (!parentNode) return;
         const parentDepth = parentNode.data?.depth ?? 0;
-        // No wrapping for root or its direct children (depth 0 or 1)
         if (parentDepth <= 1) return;
 
         const centerX = parentNode.position.x + 100;
@@ -327,39 +392,144 @@ export default function HomePage() {
     [applyLayout]
   );
 
-  const loadLatest = useCallback(async () => {
-    try {
-      const res = await fetch("/api/projects/latest", { cache: "no-store" });
-      const data: LatestProjectResponse = await res.json();
-      const project = data?.project;
-      if (!project) {
-        showStatus("Gib eine Domain ein, um zu starten.");
-        return;
-      }
+  const loadProject = useCallback(
+    async (slug: string) => {
+      setLoadingProject(true);
+      setProjectMenuOpen(false);
+      try {
+        const res = await fetch(`/api/projects/${slug}`, { cache: "no-store" });
+        const data: ProjectDetailResponse = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || "Konnte Projekt nicht laden.");
+        }
 
-      const nodes = (project.nodes as FlowNode[]) || [];
-      const edges = (project.edges as FlowEdge[]) || [];
-      setFullNodes(nodes);
-      setFullEdges(edges);
-      expandedRef.current = new Set();
-      prevVisibleRef.current = new Set();
-      showAllRef.current = false;
-      setShowAll(false);
-      setActiveDomain(project.domain);
-      setDomainInput((current) => current || project.domain);
-      rebuildGraph(nodes, edges, expandedRef.current, false);
-      showStatus("Letzte gespeicherte Karte geladen.");
-    } catch {
-      showStatus("Konnte letzte Karte nicht laden.");
-    }
-  }, [rebuildGraph, showStatus]);
+        setActiveProject(data.project);
+        setDomains(data.domains || []);
+        setFeatures(data.features || []);
+
+        const primaryDomain = (data.domains || []).find((d) => d.isPrimary) || data.domains?.[0];
+        setDomainInput(primaryDomain?.hostname || "");
+        setActiveDomain(primaryDomain?.hostname || null);
+
+        expandedRef.current = new Set();
+        prevVisibleRef.current = new Set();
+        showAllRef.current = false;
+        setShowAll(false);
+
+        if (data.latestSnapshot) {
+          const { nodes: latestNodes, edges: latestEdges, domain, snapshot } = data.latestSnapshot;
+          setFullNodes(latestNodes || []);
+          setFullEdges(latestEdges || []);
+          setActiveSnapshot(snapshot);
+          setActiveDomain(domain || primaryDomain?.hostname || null);
+          rebuildGraph(latestNodes || [], latestEdges || [], new Set(), false);
+          showStatus("Letzte Karte geladen.");
+        } else {
+          setFullNodes([]);
+          setFullEdges([]);
+          setNodes([]);
+          setEdges([]);
+          setActiveSnapshot(null);
+          showStatus("Noch keine Karte gespeichert.");
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Konnte Projekt nicht laden.";
+        showStatus(message);
+      } finally {
+        setLoadingProject(false);
+      }
+    },
+    [rebuildGraph, showStatus]
+  );
+
+  const loadProjects = useCallback(
+    async (autoSelect = true) => {
+      setLoadingProjects(true);
+      try {
+        const res = await fetch("/api/projects", { cache: "no-store" });
+        const data: ProjectsResponse = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || "Konnte Projekte nicht laden.");
+        }
+
+        setProjects(data.projects || []);
+        if (!data.projects?.length) {
+          setActiveProject(null);
+          setDomains([]);
+          setFeatures([]);
+          setActiveSnapshot(null);
+          setFullNodes([]);
+          setFullEdges([]);
+          setNodes([]);
+          setEdges([]);
+          setActiveDomain(null);
+          setDomainInput("");
+          showStatus("Lege ein Projekt an, um zu starten.");
+        } else if (autoSelect && !activeProject) {
+          await loadProject(data.projects[0].project.slug);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Konnte Projekte nicht laden.";
+        showStatus(message);
+      } finally {
+        setLoadingProjects(false);
+      }
+    },
+    [activeProject, loadProject, showStatus]
+  );
 
   useEffect(() => {
-    loadLatest();
-  }, [loadLatest]);
+    loadProjects(true);
+  }, [loadProjects]);
+
+  const handleCreateProject = async () => {
+    const name = prompt("Projektname (z. B. Kunde A)?");
+    if (!name) {
+      showStatus("Projektname wird benötigt.");
+      return;
+    }
+    const domain = prompt("Hauptdomain (z. B. example.com)?", domainInput || "example.com");
+    if (!domain) {
+      showStatus("Bitte Domain angeben.");
+      return;
+    }
+
+    setLoadingProjects(true);
+    try {
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, domain }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || "Konnte Projekt nicht anlegen.");
+      }
+      showStatus("Projekt angelegt.");
+      await loadProjects(false);
+      await loadProject(data.project.slug);
+      setDomainInput(data.domain.hostname);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Konnte Projekt nicht anlegen.";
+      showStatus(message);
+    } finally {
+      setLoadingProjects(false);
+    }
+  };
 
   const handleCrawl = async () => {
-    if (!domainInput.trim()) {
+    if (!activeProject) {
+      showStatus("Bitte zuerst ein Projekt auswählen oder erstellen.");
+      return;
+    }
+
+    const domainToUse =
+      domainInput.trim() ||
+      domains.find((d) => d.isPrimary)?.hostname ||
+      domains[0]?.hostname ||
+      "";
+
+    if (!domainToUse) {
       showStatus("Bitte eine Domain eingeben.");
       return;
     }
@@ -368,29 +538,40 @@ export default function HomePage() {
     setStatusMessage(null);
 
     try {
-      const res = await fetch("/api/crawl", {
+      const res = await fetch(`/api/projects/${activeProject.slug}/crawl`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain: domainInput.trim(), depth }),
+        body: JSON.stringify({ domain: domainToUse, depth }),
       });
 
-      const data = await res.json();
+      const data: CrawlResponse = await res.json();
       if (!res.ok) {
         throw new Error(data?.error || "Fehler beim Crawlen.");
       }
 
-      const rawNodes = (data.nodes as FlowNode[]) || [];
-      const rawEdges = (data.edges as FlowEdge[]) || [];
-      setFullNodes(rawNodes);
-      setFullEdges(rawEdges);
+      setFullNodes(data.nodes || []);
+      setFullEdges(data.edges || []);
       const collapsed = new Set<string>();
       expandedRef.current = collapsed;
       prevVisibleRef.current = new Set();
       showAllRef.current = false;
       setShowAll(false);
-      rebuildGraph(rawNodes, rawEdges, collapsed, false);
-      setActiveDomain(data.domain);
-      showStatus(`Struktur gespeichert (Tiefe ${depth}, SQLite).`);
+      rebuildGraph(data.nodes || [], data.edges || [], collapsed, false);
+      setActiveSnapshot(data.snapshot);
+      setActiveDomain(data.domain.hostname);
+      setDomainInput(data.domain.hostname);
+      showStatus(`Struktur gespeichert (Tiefe ${depth}).`);
+
+      const nextDomains = [...domains];
+      const exists = nextDomains.find((d) => d.id === data.domain.id);
+      if (!exists) {
+        nextDomains.push(data.domain);
+      }
+      setDomains(
+        nextDomains.map((d) =>
+          d.id === data.domain.id ? { ...d, isPrimary: true } : { ...d, isPrimary: false }
+        )
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Fehler beim Crawlen.";
       showStatus(message);
@@ -448,12 +629,64 @@ export default function HomePage() {
         <div className="leading-tight">
           <p className="text-lg font-semibold">Deepview</p>
           <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">
-            {activeDomain || "Alpha Project"}
+            {activeProject?.name || "Kein Projekt"}
           </p>
+        </div>
+        <div className="relative">
+          <button
+            onClick={() => setProjectMenuOpen((v) => !v)}
+            className="flex items-center gap-2 rounded-full bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm ring-1 ring-slate-100 transition hover:bg-slate-50"
+          >
+            {activeProject ? activeProject.name : "Projekt wählen"}
+            <span className={`transition-transform ${projectMenuOpen ? "rotate-180" : "rotate-0"}`}>
+              ▼
+            </span>
+          </button>
+          {projectMenuOpen && (
+            <div className="absolute z-10 mt-2 w-64 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl">
+              {projects.map((item) => (
+                <button
+                  key={item.project.id}
+                  onClick={() => loadProject(item.project.slug)}
+                  className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                >
+                  <div className="flex flex-col">
+                    <span>{item.project.name}</span>
+                    <span className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
+                      {item.primaryDomain || "ohne Domain"}
+                    </span>
+                  </div>
+                  {item.project.slug === activeProject?.slug && (
+                    <span className="text-xs text-[#2f6bff]">Aktiv</span>
+                  )}
+                </button>
+              ))}
+              <button
+                onClick={handleCreateProject}
+                className="mt-2 flex w-full items-center justify-center rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+              >
+                + Neues Projekt
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
       <div className="absolute right-6 top-6 z-10 flex items-center gap-3">
+        {features.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            {features.map((f) => (
+              <span
+                key={f.feature}
+                className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
+                  f.enabled ? "bg-white text-slate-700 ring-1 ring-slate-200" : "bg-slate-100 text-slate-400"
+                }`}
+              >
+                {f.feature}
+              </span>
+            ))}
+          </div>
+        )}
         <button
           className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-100"
           onClick={() => showStatus("Bereits automatisch gespeichert.")}
@@ -500,11 +733,13 @@ export default function HomePage() {
         {!hasGraph && (
           <div className="pointer-events-none absolute left-1/2 top-1/2 w-full max-w-xl -translate-x-1/2 -translate-y-1/2 text-center text-sm text-slate-500">
             <p className="text-lg font-semibold text-slate-700">
-              Gib eine Domain ein, um die erste Ebene zu sehen.
+              {activeProject
+                ? "Gib eine Domain ein, um die erste Ebene zu sehen."
+                : "Lege zuerst ein Projekt mit Domain an."}
             </p>
             <p className="mt-2 text-slate-500">
               Wir crawlen die gewählte Klicktiefe (1-5), speichern das Ergebnis in SQLite
-              und zeigen es hier als Karte an.
+              projektspezifisch und zeigen es hier als Karte an.
             </p>
           </div>
         )}
@@ -521,7 +756,7 @@ export default function HomePage() {
           <div className="relative flex items-center gap-2">
             <button
               onClick={handleCrawl}
-              disabled={loading}
+              disabled={loading || !activeProject}
               className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-70"
             >
               {loading ? "Crawle..." : "Crawl"}
@@ -555,15 +790,27 @@ export default function HomePage() {
             </div>
           </div>
           <button
-            onClick={loadLatest}
+            onClick={() => {
+              if (activeProject) {
+                loadProject(activeProject.slug);
+              } else {
+                loadProjects(true);
+              }
+            }}
             className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200"
           >
-            Load last
+            {loadingProjects || loadingProject ? "Lade..." : "Refresh"}
           </button>
         </div>
       </div>
 
       <div className="absolute inset-x-0 bottom-14 flex items-center justify-center gap-6 text-xs font-medium text-slate-500">
+        {activeSnapshot && (
+          <span>
+            Snapshot: {new Date(activeSnapshot.createdAt).toLocaleString()} • {activeDomain || "—"}
+          </span>
+        )}
+        {!activeSnapshot && activeProject && <span>Kein Snapshot vorhanden.</span>}
       </div>
 
       <div className="absolute left-6 bottom-6 flex items-center gap-3">
@@ -588,7 +835,6 @@ export default function HomePage() {
           </span>
         ))}
       </div>
-
     </div>
   );
 }

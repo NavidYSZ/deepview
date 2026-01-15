@@ -1,6 +1,6 @@
 # Deepview Overview
 
-Purpose: Octopus.do-like Alpha that crawls a domain (click depth 1) and renders the root and first-level pages in React Flow. Data is persisted in SQLite so the last crawl can be reloaded.
+Purpose: Octopus.do-like Alpha that crawls domains (path-depth 1–5) and renders them in React Flow. Jetzt projektfähig: Projekte/Domains, Snapshots pro Quelle (z. B. Crawler), SQLite-Speicher pro Projekt.
 
 ## Stack
 - Next.js 16 (App Router, TypeScript), Tailwind for minimal styling.
@@ -10,19 +10,19 @@ Purpose: Octopus.do-like Alpha that crawls a domain (click depth 1) and renders 
 - `better-sqlite3` for sync reads/writes in server routes; DB file at `data.sqlite` in project root.
 
 ## UX Flow
-1) On load, `GET /api/projects/latest` hydrates the last project (if any); status pill confirms.
-2) User enters a domain in the floating bar and clicks “Crawl”; loading state shown.
-3) `POST /api/crawl` fetches root, optional sitemap, normalizes URLs, builds nodes/edges by path hierarchy (not click graph), saves to SQLite, returns the graph.
-4) Expand/collapse: Only root + depth-1 visible by default; cards with children have a ▼ toggle to reveal deeper levels. A display button (🖥) toggles “show all” on/off.
-5) Layout: Dagre arranges root and children; if a parent below depth 1 has >4 visible children, children wrap in rows of 4, edges to wrapped children are black/transparent; root and its direct children never wrap.
-6) Placeholder controls remain non-functional; save/zoom icons are decorative.
+1) On load: `GET /api/projects` holt Projekliste. Falls vorhanden, das erste Projekt wird geladen via `GET /api/projects/{slug}`; Statuspill bestätigt.
+2) Project Switcher oben links: Auswahl/Wechsel; “+ Neues Projekt” legt Projekt + Primärdomain an.
+3) Crawl: Domain im Eingabebalken + Tiefe (1–5) → `POST /api/projects/{slug}/crawl`. Ergebnis wird als Snapshot gespeichert und graphisch dargestellt.
+4) Expand/collapse: Standard-Sichtbarkeit Tiefe 0–1; ▼ je Knoten; Display-Button (🖥) toggelt “show all”.
+5) Layout: Dagre; bei Eltern (Tiefe ≥2) mit >4 sichtbaren Kindern werden Kinder gewrappt; Edges zu Wrapped-Kindern schwarz/transparent; Root + direkte Kinder nie Wrap.
+6) Placeholder-Controls bleiben dekorativ; Save/Zoom-Icons ohne Funktion.
 
 ## Node/Edge Shape (React Flow)
 - Node type: `card`.
-- Node `data`: `{ label: string; path?: string; isRoot?: boolean; depth?: number; hasChildren?: boolean; expanded?: boolean }`.
+- Node `data`: `{ label: string; path?: string; isRoot?: boolean; depth?: number; hasChildren?: boolean; expanded?: boolean; isNew?: boolean; statusCode?: number; unreachable?: boolean }`.
 - Root node id: `"root"`, `isRoot: true`, label = hostname.
-- Child node ids: `"node-{normalizedPath}"` (normalized path without trailing slash; root `/` is skipped as child).
-- Edge ids: `e-{parent}-{child}`, source = parent id, target = child id, step edges (blue), except wrapped children (black/transparent).
+- Child node ids: `"node-{normalizedPath}"` (normalized path without trailing slash; root `/` wird nicht als Child angelegt).
+- Edge ids: `e-{parent}-{child}`, source = parent id, target = child id, step edges (blue), außer Wrapped-Kinder (black/transparent).
 
 ## Crawl Behavior (Path Hierarchy + Optional Sitemap)
 - Input domain normalized to `https://{host}/`; hosts compared ignoring leading `www.`; follows redirects to adjust host.
@@ -33,24 +33,22 @@ Purpose: Octopus.do-like Alpha that crawls a domain (click depth 1) and renders 
 - Default visible: depth 0–1; deeper levels shown via toggles or “show all”.
 
 ## Data Model (SQLite)
-- Table `projects`:
-  - `id INTEGER PK AUTOINCREMENT`
-  - `domain TEXT NOT NULL` (hostname only)
-  - `nodes TEXT NOT NULL` (JSON stringified React Flow nodes)
-- `edges TEXT NOT NULL` (JSON stringified React Flow edges)
-- `createdAt TEXT NOT NULL` (ISO string)
-- On startup, table is created if missing; `data.sqlite` is touched if missing to allow mounting a volume.
-- Saves occur on each successful crawl; latest project is ordered by `createdAt DESC`.
+- `projects(id, name, slug, settings, createdAt, updatedAt)` — Projekt-Stammdaten.
+- `domains(id, projectId, hostname, isPrimary, createdAt)` — Domains pro Projekt.
+- `project_features(projectId, feature, enabled, config)` — deklarative Features/Tools.
+- `snapshots(id, projectId, domainId, source, schemaVersion, meta, createdAt)` — Snapshot-Metadaten (z. B. Crawler).
+- `snapshot_blobs(snapshotId, payload)` — JSON-Payload pro Snapshot (`{domain,nodes,edges}` für Crawler).
+- `pages(projectId, domainId, path, latestSnapshotId, title, depth, statusCode, unreachable, meta)` — Normalisierte Pages für künftige Queries.
+- `metrics`, `events` — generische Tabellen für Metriken/Events, derzeit nur vorbereitet.
+- Legacy-Migration: alte `projects`-Tabelle wird nach `projects_legacy` verschoben und letzte Zeile ins neue Schema importiert.
 
 ## API Contracts
-- `POST /api/crawl`
-  - Body: `{ domain: string }`
-  - Success 200: `{ domain: string; nodes: FlowNode[]; edges: FlowEdge[] }`
-  - Error 400: `{ error: "Bitte eine Domain angeben." }`
-  - Error 500: `{ error: string }` (e.g., fetch failed)
-  - Side effect: persists project to SQLite.
-- `GET /api/projects/latest`
-  - Success 200: `{ project: { domain: string; nodes: FlowNode[]; edges: FlowEdge[]; createdAt: string } | null }`
+- `GET /api/projects` — `{ projects: [{ project, primaryDomain?, latestSnapshot? }] }`
+- `POST /api/projects` — Body `{ name, domain, slug?, settings? }` → `{ project, domain }`
+- `GET /api/projects/{slug}` — `{ project, domains, features, latestSnapshot? }` (Crawler-Snapshot inkl. Nodes/Edges)
+- `POST /api/projects/{slug}/crawl` — Body `{ domain?, depth? }` → `{ project, domain, snapshot, nodes, edges }`
+- `GET /api/projects/{slug}/snapshots?source=crawler` — `{ snapshots: Snapshot[] }`
+- Compat: `POST /api/crawl` erstellt/benutzt ein Projekt nach Domain, speichert Snapshot; `GET /api/projects/latest` liefert ggf. letzten Crawler-Snapshot.
 
 ## Deployment Notes (Coolify / Nixpacks)
 - Install: `npm install`
