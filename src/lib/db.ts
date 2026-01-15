@@ -64,11 +64,7 @@ db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 
 const tableExists = (name: string) => {
-  const row = db
-    .prepare<{ name: string }, { name: string }>(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
-    )
-    .get(name);
+  const row = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name);
   return Boolean(row);
 };
 
@@ -79,8 +75,15 @@ const isLegacyProjectsTable = () => {
   return names.includes("domain") && names.includes("nodes") && !names.includes("slug");
 };
 
-if (isLegacyProjectsTable() && !tableExists("projects_legacy")) {
-  db.exec("ALTER TABLE projects RENAME TO projects_legacy");
+if (isLegacyProjectsTable()) {
+  const legacyAlready = tableExists("projects_legacy");
+  if (!legacyAlready) {
+    try {
+      db.exec("ALTER TABLE projects RENAME TO projects_legacy");
+    } catch {
+      // ignore if rename not possible (e.g., table exists)
+    }
+  }
 }
 
 db.exec(`
@@ -188,15 +191,17 @@ const safeParse = (value: string) => {
 const now = () => new Date().toISOString();
 
 function migrateLegacyProjectsIfNeeded() {
-  const newProjectsCount = db.prepare("SELECT COUNT(*) as count FROM projects").get()
-    .count as number;
+  const countRow = db.prepare("SELECT COUNT(*) as count FROM projects").get() as
+    | { count?: number }
+    | undefined;
+  const newProjectsCount = countRow?.count ? Number(countRow.count) : 0;
   const legacyExists = tableExists("projects_legacy");
 
   if (newProjectsCount > 0 || !legacyExists) return;
 
   const legacyRows = db
-    .prepare<[], LegacyProjectRow>("SELECT * FROM projects_legacy ORDER BY createdAt DESC")
-    .all();
+    .prepare("SELECT * FROM projects_legacy ORDER BY createdAt DESC")
+    .all() as LegacyProjectRow[];
   if (!legacyRows.length) return;
 
   const latest = legacyRows[0];
@@ -316,15 +321,11 @@ export function listProjects(): Array<{
 
   return projects.map((row) => {
     const domainRow = db
-      .prepare<{ projectId: number }, { hostname: string }>(
-        "SELECT hostname FROM domains WHERE projectId = ? AND isPrimary = 1 LIMIT 1"
-      )
-      .get(row.id);
+      .prepare("SELECT hostname FROM domains WHERE projectId = ? AND isPrimary = 1 LIMIT 1")
+      .get(row.id) as { hostname: string } | undefined;
     const snapshotRow = db
-      .prepare<{ projectId: number }, { id: number; source: string; createdAt: string }>(
-        "SELECT id, source, createdAt FROM snapshots WHERE projectId = ? ORDER BY createdAt DESC LIMIT 1"
-      )
-      .get(row.id);
+      .prepare("SELECT id, source, createdAt FROM snapshots WHERE projectId = ? ORDER BY createdAt DESC LIMIT 1")
+      .get(row.id) as { id: number; source: string; createdAt: string } | undefined;
 
     return {
       project: {
@@ -347,26 +348,46 @@ export function getProjectBySlug(slug: string): {
   features: ProjectFeature[];
 } | null {
   const projectRow = db
-    .prepare<{ slug: string }, { id: number; name: string; slug: string; settings: string; createdAt: string; updatedAt: string }>(
-      "SELECT * FROM projects WHERE slug = ? LIMIT 1"
-    )
-    .get(slug);
+    .prepare("SELECT * FROM projects WHERE slug = ? LIMIT 1")
+    .get(slug) as
+    | { id: number; name: string; slug: string; settings: string; createdAt: string; updatedAt: string }
+    | undefined;
 
   if (!projectRow) return null;
 
-  const domains = db
-    .prepare<{ projectId: number }, Domain[]>(
-      "SELECT * FROM domains WHERE projectId = ? ORDER BY isPrimary DESC, hostname ASC"
-    )
-    .all(projectRow.id)
-    .map((d) => ({ ...d, isPrimary: Boolean(d.isPrimary) }));
+  const domainRows = db
+    .prepare("SELECT * FROM domains WHERE projectId = ? ORDER BY isPrimary DESC, hostname ASC")
+    .all(projectRow.id) as Array<{
+      id: number;
+      projectId: number;
+      hostname: string;
+      isPrimary: number;
+      createdAt: string;
+    }>;
 
-  const features = db
-    .prepare<{ projectId: number }, ProjectFeature[]>(
-      "SELECT * FROM project_features WHERE projectId = ?"
-    )
-    .all(projectRow.id)
-    .map((f) => ({ ...f, enabled: Boolean(f.enabled), config: safeParse(f.config as unknown as string) || {} }));
+  const featureRows = db
+    .prepare("SELECT * FROM project_features WHERE projectId = ?")
+    .all(projectRow.id) as Array<{
+      projectId: number;
+      feature: string;
+      enabled: number;
+      config: string;
+    }>;
+
+  const domainsTyped: Domain[] = domainRows.map((d) => ({
+    id: d.id,
+    projectId: d.projectId,
+    hostname: d.hostname,
+    isPrimary: Boolean((d as any).isPrimary),
+    createdAt: d.createdAt,
+  }));
+
+  const featuresTyped: ProjectFeature[] = featureRows.map((f) => ({
+    projectId: f.projectId,
+    feature: f.feature,
+    enabled: Boolean((f as any).enabled),
+    config: safeParse((f as any).config) || {},
+  }));
 
   return {
     project: {
@@ -377,17 +398,15 @@ export function getProjectBySlug(slug: string): {
       createdAt: projectRow.createdAt,
       updatedAt: projectRow.updatedAt,
     },
-    domains,
-    features,
+    domains: domainsTyped,
+    features: featuresTyped,
   };
 }
 
 export function ensureDomain(projectId: number, hostname: string, makePrimary = false): Domain {
   const existing = db
-    .prepare<{ projectId: number; hostname: string }, Domain>(
-      "SELECT * FROM domains WHERE projectId = ? AND hostname = ? LIMIT 1"
-    )
-    .get(projectId, hostname);
+    .prepare("SELECT * FROM domains WHERE projectId = ? AND hostname = ? LIMIT 1")
+    .get(projectId, hostname) as Domain | undefined;
   if (existing) {
     if (makePrimary && !existing.isPrimary) {
       db.prepare("UPDATE domains SET isPrimary = 1 WHERE id = ?").run(existing.id);
@@ -417,18 +436,22 @@ export function ensureFeature(projectId: number, feature: string, config: Record
 
 export function getPrimaryDomain(projectId: number): Domain | null {
   const row = db
-    .prepare<{ projectId: number }, Domain>(
-      "SELECT * FROM domains WHERE projectId = ? AND isPrimary = 1 LIMIT 1"
-    )
-    .get(projectId);
-  return row ? { ...row, isPrimary: Boolean(row.isPrimary) } : null;
+    .prepare("SELECT * FROM domains WHERE projectId = ? AND isPrimary = 1 LIMIT 1")
+    .get(projectId) as Domain | undefined;
+  return row ? { ...row, isPrimary: Boolean((row as any).isPrimary) } : null;
 }
 
 export function findProjectByHostname(hostname: string): { project: Project; domain: Domain } | null {
   const row = db
-    .prepare<
-      [],
-      {
+    .prepare(
+      `SELECT p.*, d.id as domainId, d.projectId, d.isPrimary as isPrimaryDomain, d.createdAt as createdAtDomain
+       FROM projects p
+       JOIN domains d ON d.projectId = p.id
+       WHERE d.hostname = ?
+       LIMIT 1`
+    )
+    .get(hostname) as
+    | {
         id: number;
         name: string;
         slug: string;
@@ -440,14 +463,7 @@ export function findProjectByHostname(hostname: string): { project: Project; dom
         isPrimaryDomain: number;
         createdAtDomain: string;
       }
-    >(
-      `SELECT p.*, d.id as domainId, d.projectId, d.isPrimary as isPrimaryDomain, d.createdAt as createdAtDomain
-       FROM projects p
-       JOIN domains d ON d.projectId = p.id
-       WHERE d.hostname = ?
-       LIMIT 1`
-    )
-    .get(hostname);
+    | undefined;
 
   if (!row) return null;
 
@@ -518,18 +534,18 @@ export function getLatestSnapshotWithPayload(
   source: string
 ): SnapshotWithPayload | null {
   const snapshotRow = db
-    .prepare<{ projectId: number; source: string }, { id: number; domainId: number | null; schemaVersion: number; meta: string; createdAt: string }>(
+    .prepare(
       "SELECT id, domainId, schemaVersion, meta, createdAt FROM snapshots WHERE projectId = ? AND source = ? ORDER BY createdAt DESC LIMIT 1"
     )
-    .get(projectId, source);
+    .get(projectId, source) as
+    | { id: number; domainId: number | null; schemaVersion: number; meta: string; createdAt: string }
+    | undefined;
 
   if (!snapshotRow) return null;
 
   const blobRow = db
-    .prepare<{ snapshotId: number }, { payload: string }>(
-      "SELECT payload FROM snapshot_blobs WHERE snapshotId = ? LIMIT 1"
-    )
-    .get(snapshotRow.id);
+    .prepare("SELECT payload FROM snapshot_blobs WHERE snapshotId = ? LIMIT 1")
+    .get(snapshotRow.id) as { payload: string } | undefined;
   if (!blobRow) return null;
 
   const payload = safeParse(blobRow.payload) || {};
@@ -550,17 +566,18 @@ export function getLatestSnapshotWithPayload(
 }
 
 export function listSnapshots(projectId: number, source?: string) {
-  const rows = source
+  const rowsRaw = source
     ? db
-        .prepare<{ projectId: number; source: string }, Snapshot[]>(
-          "SELECT * FROM snapshots WHERE projectId = ? AND source = ? ORDER BY createdAt DESC"
-        )
+        .prepare("SELECT * FROM snapshots WHERE projectId = ? AND source = ? ORDER BY createdAt DESC")
         .all(projectId, source)
     : db
-        .prepare<{ projectId: number }, Snapshot[]>(
-          "SELECT * FROM snapshots WHERE projectId = ? ORDER BY createdAt DESC"
-        )
+        .prepare("SELECT * FROM snapshots WHERE projectId = ? ORDER BY createdAt DESC")
         .all(projectId);
+  const rows = rowsRaw as Array<
+    Snapshot & {
+      meta: string;
+    }
+  >;
 
   return rows.map((row) => ({
     ...row,

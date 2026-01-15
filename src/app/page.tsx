@@ -75,6 +75,7 @@ type ProjectSummary = {
 
 type ProjectsResponse = {
   projects: ProjectSummary[];
+  error?: string;
 };
 
 type ProjectDetailResponse = {

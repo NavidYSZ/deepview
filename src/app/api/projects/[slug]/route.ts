@@ -1,10 +1,11 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getLatestSnapshotWithPayload, getProjectBySlug } from "@/lib/db";
 
 export const runtime = "nodejs";
 
-export async function GET(_request: Request, { params }: { params: { slug: string } }) {
-  const slug = params?.slug;
+export async function GET(_request: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
+  const resolvedParams = await params;
+  const slug = resolvedParams?.slug;
   if (!slug) {
     return NextResponse.json({ error: "Slug fehlt." }, { status: 400 });
   }

@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { crawlDomain, normalizeDomain } from "@/lib/crawler";
 import {
   ensureDomain,
@@ -10,9 +10,13 @@ import {
 
 export const runtime = "nodejs";
 
-export async function POST(request: Request, { params }: { params: { slug: string } }) {
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ slug: string }> }
+) {
   try {
-    const slug = params?.slug;
+    const resolvedParams = await params;
+    const slug = resolvedParams?.slug;
     if (!slug) {
       return NextResponse.json({ error: "Slug fehlt." }, { status: 400 });
     }
