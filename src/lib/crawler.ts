@@ -7,6 +7,9 @@ type FlowNode = Node<{
   isRoot?: boolean;
   statusCode?: number;
   unreachable?: boolean;
+  metaTitle?: string;
+  metaDescription?: string;
+  h1?: string;
 }>;
 type FlowEdge = Edge;
 
@@ -16,6 +19,9 @@ type PageInfo = {
   title?: string;
   statusCode?: number;
   unreachable?: boolean;
+  metaTitle?: string;
+  metaDescription?: string;
+  h1?: string;
 };
 
 export type CrawlResult = {
@@ -114,7 +120,7 @@ export async function crawlDomain(
 
   const pages = new Map<string, PageInfo>();
 
-  const addPage = (url: URL, title?: string) => {
+  const addPage = (url: URL, title?: string, meta?: Partial<PageInfo>) => {
     if (!matchesHost(url.hostname, rootHost)) return;
     const path = cleanPath(url);
     const existing = pages.get(path);
@@ -124,6 +130,9 @@ export async function crawlDomain(
       title: title || existing?.title,
       statusCode: existing?.statusCode,
       unreachable: existing?.unreachable,
+      metaTitle: meta?.metaTitle ?? existing?.metaTitle,
+      metaDescription: meta?.metaDescription ?? existing?.metaDescription,
+      h1: meta?.h1 ?? existing?.h1,
     });
   };
 
@@ -174,6 +183,20 @@ export async function crawlDomain(
       const html = await res.text();
       const $ = load(html);
       const title = $("title").first().text().trim() || undefined;
+      const metaTitle =
+        $('meta[property="og:title"]').attr("content")?.trim() ||
+        $('meta[name="twitter:title"]').attr("content")?.trim() ||
+        title;
+      const metaDescription =
+        $('meta[name="description"]').attr("content")?.trim() ||
+        $('meta[property="og:description"]').attr("content")?.trim() ||
+        $('meta[name="twitter:description"]').attr("content")?.trim() ||
+        undefined;
+      const h1 = $("h1")
+        .first()
+        .text()
+        .replace(/\s+/g, " ")
+        .trim() || undefined;
       const links: URL[] = [];
       $("a[href]").each((_, el) => {
         const href = $(el).attr("href");
@@ -187,7 +210,7 @@ export async function crawlDomain(
         }
       });
 
-      addPage(current, title);
+      addPage(current, title, { metaTitle, metaDescription, h1 });
 
       for (const link of links) {
         if (!matchesHost(link.hostname, rootHost)) continue;
@@ -273,6 +296,9 @@ export async function crawlDomain(
         isRoot: depth === 0,
         statusCode: info.statusCode,
         unreachable: info.unreachable,
+        metaTitle: info.metaTitle || info.title || undefined,
+        metaDescription: info.metaDescription,
+        h1: info.h1,
       },
       position: { x: 0, y: 0 },
       type: "card",

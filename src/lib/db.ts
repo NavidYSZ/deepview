@@ -9,6 +9,9 @@ type FlowNode = Node<{
   isRoot?: boolean;
   statusCode?: number;
   unreachable?: boolean;
+  metaTitle?: string;
+  metaDescription?: string;
+  h1?: string;
 }>;
 type FlowEdge = Edge;
 
@@ -614,6 +617,12 @@ export function upsertPagesFromNodes(
     const statusCode = node.data?.statusCode ?? null;
     const unreachable = node.data?.unreachable ? 1 : 0;
 
+    const meta = {
+      metaTitle: node.data?.metaTitle || null,
+      metaDescription: node.data?.metaDescription || null,
+      h1: node.data?.h1 || null,
+    };
+
     pageStmt.run(
       projectId,
       domainId,
@@ -623,7 +632,7 @@ export function upsertPagesFromNodes(
       depth,
       statusCode,
       unreachable,
-      JSON.stringify({})
+      JSON.stringify(meta)
     );
   });
 }

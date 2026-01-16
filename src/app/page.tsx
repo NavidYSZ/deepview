@@ -23,6 +23,9 @@ type FlowNode = Node<{
   isNew?: boolean;
   statusCode?: number;
   unreachable?: boolean;
+  metaTitle?: string;
+  metaDescription?: string;
+  h1?: string;
 }>;
 type FlowEdge = Edge;
 
@@ -176,6 +179,7 @@ export default function HomePage() {
   const [depthOpen, setDepthOpen] = useState(false);
   const [fullNodes, setFullNodes] = useState<FlowNode[]>([]);
   const [fullEdges, setFullEdges] = useState<FlowEdge[]>([]);
+  const [selectedNode, setSelectedNode] = useState<FlowNode | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
@@ -362,28 +366,34 @@ export default function HomePage() {
         (edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target)
       );
 
-      const decoratedNodes = visibleNodes.map((node) => ({
-        ...node,
-        data: {
-          ...node.data,
-          depth: depthFromNode(node),
-          hasChildren: (childrenMapFull[node.id] || []).length > 0,
-          expanded: expandedSet.has(node.id),
-          isNew: !prevVisibleRef.current.has(node.id),
-          onToggle: () => {
-            const nextExpanded = new Set(expandedRef.current);
-            if (nextExpanded.has(node.id)) {
-              nextExpanded.delete(node.id);
-            } else {
-              nextExpanded.add(node.id);
-            }
-            expandedRef.current = nextExpanded;
-            showAllRef.current = false;
-            setShowAll(false);
-            rebuildGraph(srcNodes, srcEdges, nextExpanded, false);
+        const decoratedNodes = visibleNodes.map((node) => ({
+          ...node,
+          data: {
+            ...node.data,
+            depth: depthFromNode(node),
+            hasChildren: (childrenMapFull[node.id] || []).length > 0,
+            expanded: expandedSet.has(node.id),
+            isNew: !prevVisibleRef.current.has(node.id),
+            onToggle: () => {
+              const nextExpanded = new Set(expandedRef.current);
+              if (nextExpanded.has(node.id)) {
+                nextExpanded.delete(node.id);
+              } else {
+                nextExpanded.add(node.id);
+              }
+              expandedRef.current = nextExpanded;
+              showAllRef.current = false;
+              setShowAll(false);
+              setSelectedNode((prev) => {
+                if (prev && prev.id === node.id) {
+                  return { ...node };
+                }
+                return prev;
+              });
+              rebuildGraph(srcNodes, srcEdges, nextExpanded, false);
+            },
           },
-        },
-      }));
+        }));
 
       const layout = applyLayout(decoratedNodes, visibleEdges);
       setNodes(layout.nodes);
@@ -416,6 +426,7 @@ export default function HomePage() {
         prevVisibleRef.current = new Set();
         showAllRef.current = false;
         setShowAll(false);
+        setSelectedNode(null);
 
         if (data.latestSnapshot) {
           const { nodes: latestNodes, edges: latestEdges, domain, snapshot } = data.latestSnapshot;
@@ -431,6 +442,7 @@ export default function HomePage() {
           setNodes([]);
           setEdges([]);
           setActiveSnapshot(null);
+          setSelectedNode(null);
           showStatus("Noch keine Karte gespeichert.");
         }
       } catch (error) {
@@ -465,6 +477,7 @@ export default function HomePage() {
           setEdges([]);
           setActiveDomain(null);
           setDomainInput("");
+          setSelectedNode(null);
           showStatus("Lege ein Projekt an, um zu starten.");
         } else if (autoSelect && !activeProject) {
           await loadProject(data.projects[0].project.slug);
@@ -561,6 +574,7 @@ export default function HomePage() {
       setActiveSnapshot(data.snapshot);
       setActiveDomain(data.domain.hostname);
       setDomainInput(data.domain.hostname);
+      setSelectedNode(null);
       showStatus(`Struktur gespeichert (Tiefe ${depth}).`);
 
       const nextDomains = [...domains];
@@ -727,6 +741,8 @@ export default function HomePage() {
           fitViewOptions={{ padding: 0.4 }}
           proOptions={{ hideAttribution: true }}
           className="rounded-2xl"
+          onNodeClick={(_, node) => setSelectedNode(node as FlowNode)}
+          onPaneClick={() => setSelectedNode(null)}
         >
           <Background gap={26} color="#e7ecfb" />
         </ReactFlow>
@@ -835,6 +851,66 @@ export default function HomePage() {
             {item}
           </span>
         ))}
+      </div>
+
+      <div
+        className={`pointer-events-none fixed right-0 top-0 h-full w-96 max-w-full transform bg-white shadow-2xl ring-1 ring-slate-200 transition-all duration-300 ${
+          selectedNode ? "translate-x-0 opacity-100" : "translate-x-full opacity-0"
+        }`}
+        style={{ willChange: "transform, opacity" }}
+      >
+        <div className="pointer-events-auto flex h-full flex-col gap-4 p-6">
+          <div className="flex items-start justify-between">
+            <div className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-400">
+              Page Details
+            </div>
+            <button
+              onClick={() => setSelectedNode(null)}
+              className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+            >
+              Schließen
+            </button>
+          </div>
+          {selectedNode ? (
+            <div className="flex flex-col gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">
+                  Label
+                </p>
+                <p className="text-lg font-semibold text-slate-800">{selectedNode.data?.label}</p>
+                {selectedNode.data?.path && (
+                  <p className="text-xs text-slate-500">{selectedNode.data.path}</p>
+                )}
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200/80">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                  Meta Title
+                </p>
+                <p className="mt-1 text-sm text-slate-800">
+                  {selectedNode.data?.metaTitle || "—"}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200/80">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                  Meta Description
+                </p>
+                <p className="mt-1 text-sm text-slate-800 leading-relaxed">
+                  {selectedNode.data?.metaDescription || "—"}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200/80">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                  H1
+                </p>
+                <p className="mt-1 text-sm text-slate-800">{selectedNode.data?.h1 || "—"}</p>
+              </div>
+            </div>
+          ) : (
+            <div className="flex h-full items-center justify-center text-sm text-slate-500">
+              Keine Seite ausgewählt.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
