@@ -854,12 +854,12 @@ export default function HomePage() {
       </div>
 
       <div
-        className={`pointer-events-none fixed right-0 top-0 h-full w-96 max-w-full transform bg-white shadow-2xl ring-1 ring-slate-200 transition-all duration-300 ${
-          selectedNode ? "translate-x-0 opacity-100" : "translate-x-full opacity-0"
+        className={`pointer-events-none fixed right-6 top-20 bottom-6 w-[420px] max-w-full transform rounded-3xl bg-white shadow-2xl ring-1 ring-slate-200 transition-all duration-300 ${
+          selectedNode ? "translate-x-0 opacity-100" : "translate-x-[110%] opacity-0"
         }`}
         style={{ willChange: "transform, opacity" }}
       >
-        <div className="pointer-events-auto flex h-full flex-col gap-4 p-6">
+        <div className="pointer-events-auto flex h-full flex-col gap-4 overflow-y-auto p-6">
           <div className="flex items-start justify-between">
             <div className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-400">
               Page Details
