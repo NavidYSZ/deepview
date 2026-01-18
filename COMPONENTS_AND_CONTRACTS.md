@@ -28,8 +28,9 @@ Goal: Snapshot of the moving parts (UI, crawler, DB, APIs, contracts) for projec
 
 ## Persistence Layer (src/lib/db.ts)
 - DB: `data.sqlite` (WAL).
-- Tables: `projects`, `domains`, `project_features`, `snapshots`, `snapshot_blobs`, `pages`, `metrics`, `events`.
+- Tables: `projects`, `domains`, `project_features`, `snapshots`, `snapshot_blobs`, `pages`, `keyword_imports`, `keywords`, `metrics`, `events`.
   - Snapshots store meta + payload JSON; pages table is normalized (path/depth/title/status).
+  - Keywords: per project/domain/path with volume/difficulty/position + meta, linked to imports.
   - Legacy migration: old `projects` table is renamed `projects_legacy`; latest row imported as project+snapshot.
 - Helpers:
   - `createProject(name, domain, slug?, settings?)`
@@ -42,6 +43,9 @@ Goal: Snapshot of the moving parts (UI, crawler, DB, APIs, contracts) for projec
   - `getLatestSnapshotWithPayload(projectId, source)`
   - `listSnapshots(projectId, source?)`
   - `upsertPagesFromNodes(projectId, domainId, snapshotId, nodes)`
+  - `createKeywordImport(projectId, domainId, source, fileName, meta)`
+  - `saveKeywords(projectId, importId, rows)`
+  - `getKeywords(projectId, { path?, domainId? })`
 
 ## API Routes
 - **GET /api/projects** — Projektliste mit Primärdomain + letztem Snapshot-Stempel.
@@ -49,6 +53,8 @@ Goal: Snapshot of the moving parts (UI, crawler, DB, APIs, contracts) for projec
 - **GET /api/projects/{slug}** — `{ project, domains, features, latestSnapshot? }` (Crawler payload inkl. nodes/edges).
 - **POST /api/projects/{slug}/crawl** — Body `{ domain?, depth? }` → `{ project, domain, snapshot, nodes, edges }` + pages upsert.
 - **GET /api/projects/{slug}/snapshots?source=crawler** — Snapshot-Metadaten.
+- **GET /api/projects/{slug}/keywords** — Optional `domain`, `path` Filter; liefert gespeicherte Keywords.
+- **POST /api/projects/{slug}/keywords** — FormData-Upload (CSV/TSV/XLSX) oder JSON; speichert Keywords pro Pfad/Domain.
 - **Compat:** `POST /api/crawl` auto-creates/finds project by domain and stores snapshot; `GET /api/projects/latest` returns first available crawler snapshot if any.
 
 ## Data Contracts
@@ -58,6 +64,7 @@ Goal: Snapshot of the moving parts (UI, crawler, DB, APIs, contracts) for projec
 - **Domain**: `{ id, projectId, hostname, isPrimary, createdAt }`
 - **Snapshot**: `{ id, projectId, domainId, source, schemaVersion, meta, createdAt }`
 - **Snapshot payload (crawler)**: `{ domain: string; nodes: FlowNode[]; edges: FlowEdge[] }`
+- **Keyword**: `{ id, projectId, importId, domainId, term, url, path, volume?, difficulty?, position?, meta, createdAt }`
 
 ## Behavior Defaults / Flags
 - Visible by default: depths 0–1.

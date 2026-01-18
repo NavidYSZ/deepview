@@ -98,6 +98,54 @@ type CrawlResponse = {
   error?: string;
 };
 
+type Keyword = {
+  id: number;
+  projectId: number;
+  importId: number;
+  domainId: number;
+  term: string;
+  url: string | null;
+  path: string;
+  volume: number | null;
+  difficulty: number | null;
+  position: number | null;
+  meta: Record<string, unknown>;
+  createdAt: string;
+};
+
+type KeywordsResponse = {
+  keywords: Keyword[];
+  error?: string;
+};
+
+type KeywordImportResponse = {
+  import: { id: number };
+  created: number;
+  keywords: Keyword[];
+  error?: string;
+};
+
+const normalizePathValue = (value?: string | null) => {
+  const trimmed = (value || "").trim();
+  if (!trimmed) return "/";
+  let path = trimmed;
+  const hashIndex = path.indexOf("#");
+  if (hashIndex >= 0) {
+    path = path.slice(0, hashIndex);
+  }
+  const queryIndex = path.indexOf("?");
+  if (queryIndex >= 0) {
+    path = path.slice(0, queryIndex);
+  }
+  if (!path.startsWith("/")) {
+    path = `/${path}`;
+  }
+  if (path.length > 1 && path.endsWith("/")) {
+    path = path.slice(0, -1);
+  }
+  return path || "/";
+};
+
 const toolbarPlaceholders = ["↔", "🔍", "⟳", "◇", "⚡", "≡"];
 
 const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
@@ -186,10 +234,15 @@ export default function HomePage() {
   const [domains, setDomains] = useState<Domain[]>([]);
   const [features, setFeatures] = useState<ProjectFeature[]>([]);
   const [activeSnapshot, setActiveSnapshot] = useState<Snapshot | null>(null);
+  const [overviewOpen, setOverviewOpen] = useState(false);
+  const [keywordsByPath, setKeywordsByPath] = useState<Record<string, Keyword[]>>({});
+  const [loadingKeywords, setLoadingKeywords] = useState(false);
+  const [uploadingKeywords, setUploadingKeywords] = useState(false);
   const expandedRef = useRef<Set<string>>(new Set());
   const showAllRef = useRef(false);
   const [showAll, setShowAll] = useState(false);
   const prevVisibleRef = useRef<Set<string>>(new Set());
+  const keywordFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const nodeTypes = useMemo(() => ({ card: CardNode }), []);
   const hasGraph = nodes.length > 0;
@@ -203,6 +256,22 @@ export default function HomePage() {
     }),
     []
   );
+  const keywordSummaries = useMemo(
+    () =>
+      Object.entries(keywordsByPath)
+        .map(([path, list]) => ({
+          path,
+          count: list.length,
+          sample: list.slice(0, 3),
+        }))
+        .sort((a, b) => b.count - a.count),
+    [keywordsByPath]
+  );
+  const keywordsForSelected = useMemo(() => {
+    if (!selectedNode) return [];
+    const key = normalizePathValue(selectedNode.data?.path || "/");
+    return keywordsByPath[key] || [];
+  }, [keywordsByPath, selectedNode]);
 
   const showStatus = useCallback((message: string) => {
     setStatusMessage(message);
@@ -408,6 +477,7 @@ export default function HomePage() {
       setLoadingProject(true);
       setProjectMenuOpen(false);
       try {
+        setKeywordsByPath({});
         const res = await fetch(`/api/projects/${slug}`, { cache: "no-store" });
         const data: ProjectDetailResponse = await res.json();
         if (!res.ok) {
@@ -445,6 +515,8 @@ export default function HomePage() {
           setSelectedNode(null);
           showStatus("Noch keine Karte gespeichert.");
         }
+
+        await loadKeywords(data.project.slug);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Konnte Projekt nicht laden.";
         showStatus(message);
@@ -452,7 +524,7 @@ export default function HomePage() {
         setLoadingProject(false);
       }
     },
-    [rebuildGraph, showStatus]
+    [loadKeywords, rebuildGraph, showStatus]
   );
 
   const loadProjects = useCallback(
@@ -478,6 +550,7 @@ export default function HomePage() {
           setActiveDomain(null);
           setDomainInput("");
           setSelectedNode(null);
+          setKeywordsByPath({});
           showStatus("Lege ein Projekt an, um zu starten.");
         } else if (autoSelect && !activeProject) {
           await loadProject(data.projects[0].project.slug);
@@ -490,6 +563,32 @@ export default function HomePage() {
       }
     },
     [activeProject, loadProject, showStatus]
+  );
+
+  const loadKeywords = useCallback(
+    async (slug: string) => {
+      setLoadingKeywords(true);
+      try {
+        const res = await fetch(`/api/projects/${slug}/keywords`, { cache: "no-store" });
+        const data: KeywordsResponse = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || "Konnte Keywords nicht laden.");
+        }
+        const byPath: Record<string, Keyword[]> = {};
+        (data.keywords || []).forEach((kw) => {
+          const key = normalizePathValue(kw.path);
+          byPath[key] = byPath[key] || [];
+          byPath[key].push(kw);
+        });
+        setKeywordsByPath(byPath);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Konnte Keywords nicht laden.";
+        showStatus(message);
+      } finally {
+        setLoadingKeywords(false);
+      }
+    },
+    [showStatus]
   );
 
   useEffect(() => {
@@ -593,6 +692,42 @@ export default function HomePage() {
     } finally {
       setLoading(false);
       setDepthOpen(false);
+    }
+  };
+
+  const handleKeywordUpload = async (file: File | null) => {
+    if (!file) return;
+    if (!activeProject) {
+      showStatus("Bitte zuerst ein Projekt auswählen.");
+      return;
+    }
+    setUploadingKeywords(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("source", "upload");
+      if (activeDomain) {
+        formData.append("domain", activeDomain);
+      }
+      const res = await fetch(`/api/projects/${activeProject.slug}/keywords`, {
+        method: "POST",
+        body: formData,
+      });
+      const data: KeywordImportResponse = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || "Fehler beim Keyword-Upload.");
+      }
+      await loadKeywords(activeProject.slug);
+      showStatus(`${data.created || 0} Keywords gespeichert.`);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Fehler beim Keyword-Upload.";
+      showStatus(message);
+    } finally {
+      setUploadingKeywords(false);
+      if (keywordFileInputRef.current) {
+        keywordFileInputRef.current.value = "";
+      }
     }
   };
 
@@ -830,15 +965,13 @@ export default function HomePage() {
         {!activeSnapshot && activeProject && <span>Kein Snapshot vorhanden.</span>}
       </div>
 
-      <div className="absolute left-6 bottom-6 flex items-center gap-3">
-        <button className="flex h-10 w-10 items-center justify-center rounded-full bg-[#8f6cff] text-white shadow-lg shadow-[#8f6cff]/30">
-          ✦
-        </button>
-        <button className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-600 shadow-sm ring-1 ring-slate-200">
-          ⟳
-        </button>
-        <button className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-600 shadow-sm ring-1 ring-slate-200">
-          ⌫
+      <div className="absolute left-6 bottom-6 flex items-center">
+        <button
+          onClick={() => setOverviewOpen((v) => !v)}
+          className="flex h-12 w-12 items-center justify-center rounded-full bg-[#8f6cff] text-xl text-white shadow-lg shadow-[#8f6cff]/30 transition hover:brightness-105"
+          aria-label="Projektübersicht"
+        >
+          🗂
         </button>
       </div>
 
@@ -851,6 +984,106 @@ export default function HomePage() {
             {item}
           </span>
         ))}
+      </div>
+
+      <div
+        className={`pointer-events-none fixed left-6 top-20 bottom-6 w-[420px] max-w-full transform rounded-3xl bg-white shadow-2xl ring-1 ring-slate-200 transition-all duration-300 ${
+          overviewOpen ? "translate-x-0 opacity-100" : "-translate-x-[110%] opacity-0"
+        }`}
+        style={{ willChange: "transform, opacity" }}
+      >
+        <div className="pointer-events-auto flex h-full flex-col gap-4 overflow-y-auto p-6">
+          <div className="flex items-start justify-between">
+            <div className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-400">
+              Project Overview
+            </div>
+            <button
+              onClick={() => setOverviewOpen(false)}
+              className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+            >
+              Schließen
+            </button>
+          </div>
+
+          <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200/80">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+              Aktives Projekt
+            </p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">
+              {activeProject?.name || "—"}
+            </p>
+            <p className="text-xs text-slate-500">
+              Domain: {activeDomain || domains[0]?.hostname || "—"}
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Keywords</p>
+              <p className="text-xs text-slate-500">
+                Upload (CSV/TSV/XLSX), automatische URL-Zuordnung.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {loadingKeywords && <span className="text-xs text-slate-500">Lädt…</span>}
+              <input
+                ref={keywordFileInputRef}
+                type="file"
+                accept=".xlsx,.csv,.tsv"
+                className="hidden"
+                onChange={(e) => handleKeywordUpload(e.target.files?.[0] || null)}
+              />
+              <button
+                onClick={() => keywordFileInputRef.current?.click()}
+                disabled={!activeProject || uploadingKeywords}
+                className={`rounded-full px-3 py-2 text-sm font-semibold shadow-sm ring-1 ring-slate-200 transition ${
+                  uploadingKeywords
+                    ? "bg-slate-100 text-slate-500"
+                    : "bg-slate-900 text-white hover:bg-slate-800"
+                } disabled:opacity-60`}
+              >
+                {uploadingKeywords ? "Lädt..." : "Upload"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            {keywordSummaries.length ? (
+              keywordSummaries.map((item) => (
+                <div
+                  key={item.path}
+                  className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200/80"
+                >
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-slate-800">{item.path}</p>
+                    <span className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200">
+                      {item.count} KW
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {item.sample.map((kw) => (
+                      <span
+                        key={`${kw.id}-${kw.term}`}
+                        className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200"
+                      >
+                        {kw.term}
+                      </span>
+                    ))}
+                    {item.count > item.sample.length && (
+                      <span className="text-xs text-slate-500">
+                        + {item.count - item.sample.length} weitere
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500 ring-1 ring-slate-200/80">
+                Noch keine Keywords hochgeladen.
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       <div
@@ -903,6 +1136,34 @@ export default function HomePage() {
                   H1
                 </p>
                 <p className="mt-1 text-sm text-slate-800">{selectedNode.data?.h1 || "—"}</p>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200/80">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                  Keywords
+                </p>
+                {keywordsForSelected.length ? (
+                  <div className="mt-2 flex flex-col gap-2">
+                    {keywordsForSelected.map((kw) => (
+                      <div
+                        key={kw.id}
+                        className="rounded-xl bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold text-slate-800">{kw.term}</span>
+                          <span className="text-[11px] text-slate-500">
+                            {kw.position ? `Pos ${kw.position}` : ""}
+                            {kw.volume
+                              ? `${kw.position ? " • " : ""}SV ${kw.volume}`
+                              : ""}
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-500">{kw.path}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-sm text-slate-500">Keine Keywords für diese Seite.</p>
+                )}
               </div>
             </div>
           ) : (

@@ -56,6 +56,31 @@ export type SnapshotWithPayload = {
   domain: string;
 };
 
+export type KeywordImport = {
+  id: number;
+  projectId: number;
+  domainId: number | null;
+  source: string;
+  fileName: string | null;
+  meta: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type Keyword = {
+  id: number;
+  projectId: number;
+  importId: number;
+  domainId: number;
+  term: string;
+  url: string | null;
+  path: string;
+  volume: number | null;
+  difficulty: number | null;
+  position: number | null;
+  meta: Record<string, unknown>;
+  createdAt: string;
+};
+
 const dbFile = path.join(process.cwd(), "data.sqlite");
 
 if (!fs.existsSync(dbFile)) {
@@ -166,6 +191,32 @@ db.exec(`
     createdAt TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_events_target ON events(projectId, targetType, targetRef);
+  CREATE TABLE IF NOT EXISTS keyword_imports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    projectId INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    domainId INTEGER REFERENCES domains(id),
+    source TEXT NOT NULL,
+    fileName TEXT,
+    meta TEXT NOT NULL DEFAULT '{}',
+    createdAt TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS keywords (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    projectId INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    importId INTEGER NOT NULL REFERENCES keyword_imports(id) ON DELETE CASCADE,
+    domainId INTEGER NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
+    term TEXT NOT NULL,
+    url TEXT,
+    path TEXT NOT NULL,
+    volume INTEGER,
+    difficulty REAL,
+    position INTEGER,
+    meta TEXT NOT NULL DEFAULT '{}',
+    createdAt TEXT NOT NULL,
+    UNIQUE(projectId, domainId, term, path)
+  );
+  CREATE INDEX IF NOT EXISTS idx_keywords_project ON keywords(projectId);
+  CREATE INDEX IF NOT EXISTS idx_keywords_path ON keywords(projectId, path);
 `);
 
 type LegacyProjectRow = {
@@ -381,15 +432,15 @@ export function getProjectBySlug(slug: string): {
     id: d.id,
     projectId: d.projectId,
     hostname: d.hostname,
-    isPrimary: Boolean((d as any).isPrimary),
+    isPrimary: Boolean(d.isPrimary),
     createdAt: d.createdAt,
   }));
 
   const featuresTyped: ProjectFeature[] = featureRows.map((f) => ({
     projectId: f.projectId,
     feature: f.feature,
-    enabled: Boolean((f as any).enabled),
-    config: safeParse((f as any).config) || {},
+    enabled: Boolean(f.enabled),
+    config: safeParse(f.config) || {},
   }));
 
   return {
@@ -441,7 +492,7 @@ export function getPrimaryDomain(projectId: number): Domain | null {
   const row = db
     .prepare("SELECT * FROM domains WHERE projectId = ? AND isPrimary = 1 LIMIT 1")
     .get(projectId) as Domain | undefined;
-  return row ? { ...row, isPrimary: Boolean((row as any).isPrimary) } : null;
+  return row ? { ...row, isPrimary: Boolean(row.isPrimary) } : null;
 }
 
 export function findProjectByHostname(hostname: string): { project: Project; domain: Domain } | null {
@@ -635,4 +686,143 @@ export function upsertPagesFromNodes(
       JSON.stringify(meta)
     );
   });
+}
+
+const normalizePathValue = (value: string) => {
+  const trimmed = (value || "").trim();
+  if (!trimmed) return "/";
+  let pathValue = trimmed;
+  const hashIndex = pathValue.indexOf("#");
+  if (hashIndex >= 0) {
+    pathValue = pathValue.slice(0, hashIndex);
+  }
+  const queryIndex = pathValue.indexOf("?");
+  if (queryIndex >= 0) {
+    pathValue = pathValue.slice(0, queryIndex);
+  }
+  if (!pathValue.startsWith("/")) {
+    pathValue = `/${pathValue}`;
+  }
+  if (pathValue.length > 1 && pathValue.endsWith("/")) {
+    pathValue = pathValue.slice(0, -1);
+  }
+  return pathValue || "/";
+};
+
+export function createKeywordImport(
+  projectId: number,
+  domainId: number | null,
+  source: string,
+  fileName: string | null,
+  meta: Record<string, unknown> = {}
+): KeywordImport {
+  const createdAt = now();
+  const stmt = db.prepare(
+    "INSERT INTO keyword_imports (projectId, domainId, source, fileName, meta, createdAt) VALUES (?, ?, ?, ?, ?, ?)"
+  );
+  const info = stmt.run(projectId, domainId, source, fileName, JSON.stringify(meta), createdAt);
+  const id = Number(info.lastInsertRowid);
+  return { id, projectId, domainId, source, fileName, meta, createdAt };
+}
+
+type KeywordInput = {
+  term: string;
+  url?: string | null;
+  path: string;
+  volume?: number | null;
+  difficulty?: number | null;
+  position?: number | null;
+  meta?: Record<string, unknown>;
+  domainId: number;
+};
+
+export function saveKeywords(
+  projectId: number,
+  importId: number,
+  rows: KeywordInput[]
+): Keyword[] {
+  const stmt = db.prepare(
+    `INSERT INTO keywords (projectId, importId, domainId, term, url, path, volume, difficulty, position, meta, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(projectId, domainId, term, path) DO UPDATE SET
+       importId = excluded.importId,
+       url = excluded.url,
+       volume = excluded.volume,
+       difficulty = excluded.difficulty,
+       position = excluded.position,
+       meta = excluded.meta,
+       createdAt = excluded.createdAt`
+  );
+  const selectStmt = db.prepare(
+    "SELECT * FROM keywords WHERE projectId = ? AND domainId = ? AND term = ? AND path = ? LIMIT 1"
+  );
+
+  const seen = new Set<string>();
+  const results: Keyword[] = [];
+
+  rows.forEach((row) => {
+    const term = row.term.trim();
+    const pathValue = normalizePathValue(row.path);
+    const key = `${row.domainId}|${term.toLowerCase()}|${pathValue}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+
+    const timestamp = now();
+    const metaString = JSON.stringify(row.meta || {});
+    stmt.run(
+      projectId,
+      importId,
+      row.domainId,
+      term,
+      row.url || null,
+      pathValue,
+      row.volume ?? null,
+      row.difficulty ?? null,
+      row.position ?? null,
+      metaString,
+      timestamp
+    );
+
+    const fetched = selectStmt.get(projectId, row.domainId, term, pathValue) as
+      | (Keyword & { meta: string })
+      | undefined;
+    if (fetched) {
+      results.push({
+        ...fetched,
+        meta: safeParse(fetched.meta) || {},
+      });
+    }
+  });
+
+  return results;
+}
+
+export function getKeywords(
+  projectId: number,
+  options?: { path?: string; domainId?: number | null }
+): Keyword[] {
+  const clauses = ["projectId = ?"];
+  const params: Array<number | string> = [projectId];
+  if (options?.path) {
+    clauses.push("path = ?");
+    params.push(normalizePathValue(options.path));
+  }
+  if (typeof options?.domainId === "number") {
+    clauses.push("domainId = ?");
+    params.push(options.domainId);
+  }
+
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const rows = db
+    .prepare(`SELECT * FROM keywords ${where} ORDER BY term COLLATE NOCASE ASC`)
+    .all(...params) as Array<
+    Keyword & {
+      meta: string;
+    }
+  >;
+
+  return rows.map((row) => ({
+    ...row,
+    meta: safeParse(row.meta) || {},
+  }));
 }
