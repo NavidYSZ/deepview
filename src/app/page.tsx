@@ -158,7 +158,7 @@ const toolbarPlaceholders = ["↔", "🔍", "⟳", "◇", "⚡", "≡"];
 const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
   const isError = data?.unreachable || (data?.statusCode ?? 200) >= 400;
   const borderColor = isError ? "#ef4444" : data?.isRoot ? "#8f6cff" : "#2f6bff";
-  const showToggle = data?.hasChildren;
+  const showToggle = data?.hasChildren && !data?.isRoot;
   const cardHeight = Math.max(data?.cardHeight || 0, CARD_MIN_HEIGHT);
 
   return (
@@ -264,10 +264,9 @@ export default function HomePage() {
   const depthOptions = useMemo(() => [1, 2, 3, 4, 5], []);
   const defaultEdgeOptions = useMemo(
     () => ({
-      type: "step" as const,
+      type: "smoothstep" as const,
       style: { stroke: "#b7c7ff", strokeWidth: 2 },
       interactionWidth: 20,
-      pathOptions: { borderRadius: 14 },
     }),
     []
   );
@@ -360,7 +359,7 @@ export default function HomePage() {
 
       const layoutedEdges = inputEdges.map((edge) => ({
         ...edge,
-        type: edge.type || "step",
+        type: "smoothstep",
       }));
 
       const childrenByParent = inputEdges.reduce<Record<string, string[]>>((acc, edge) => {

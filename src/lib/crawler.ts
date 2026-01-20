@@ -311,7 +311,7 @@ export async function crawlDomain(
         id: `e-${parentId}-${nodeId}`,
         source: parentId,
         target: nodeId,
-        type: "step",
+        type: "smoothstep",
         style: { stroke: "#b7c7ff", strokeWidth: 2 },
       });
     }
