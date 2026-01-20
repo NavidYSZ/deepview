@@ -196,7 +196,7 @@ const InfinityIcon = ({ className }: { className?: string }) => (
 const GhostNode = ({ data }: NodeProps<FlowNode["data"]>) => {
   const cardHeight = Math.max(data?.cardHeight || 0, CARD_MIN_HEIGHT);
   return (
-    <div className="relative">
+    <div className="relative group">
       <div
         className="flex w-full flex-col rounded-2xl border-2 border-dashed border-slate-500/50 bg-white/80 px-4 py-3 text-slate-700 shadow-[0_8px_24px_rgba(0,0,0,0.05)]"
         style={{ minHeight: cardHeight, width: CARD_WIDTH }}
@@ -218,7 +218,7 @@ const GhostNode = ({ data }: NodeProps<FlowNode["data"]>) => {
           e.stopPropagation();
           data?.onAddGhostDown?.();
         }}
-        className="absolute left-1/2 bottom-[-10px] -translate-x-1/2 rounded-full border border-dashed border-slate-400/70 bg-white/60 px-2 py-1 text-sm font-semibold text-slate-600 opacity-60 shadow-sm transition hover:opacity-100"
+        className="absolute left-1/4 bottom-[-10px] -translate-x-1/2 rounded-full border border-dashed border-slate-400/70 bg-white/60 px-2 py-1 text-sm font-semibold text-slate-600 opacity-0 shadow-sm transition hover:opacity-100 group-hover:opacity-70"
       >
         +
       </button>
@@ -227,7 +227,7 @@ const GhostNode = ({ data }: NodeProps<FlowNode["data"]>) => {
           e.stopPropagation();
           data?.onAddGhostRight?.();
         }}
-        className="absolute right-[-10px] top-1/2 -translate-y-1/2 rounded-full border border-dashed border-slate-400/70 bg-white/60 px-2 py-1 text-sm font-semibold text-slate-600 opacity-60 shadow-sm transition hover:opacity-100"
+        className="absolute right-[-10px] top-1/2 -translate-y-1/2 rounded-full border border-dashed border-slate-400/70 bg-white/60 px-2 py-1 text-sm font-semibold text-slate-600 opacity-0 shadow-sm transition hover:opacity-100 group-hover:opacity-70"
       >
         +
       </button>
@@ -283,7 +283,7 @@ const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
   const cardHeight = Math.max(data?.cardHeight || 0, CARD_MIN_HEIGHT);
 
   return (
-    <div className="relative">
+    <div className="relative group">
       <div
         className={`group flex w-full flex-col rounded-2xl bg-white px-4 py-3 shadow-[0_8px_24px_rgba(47,107,255,0.08)] ${
           data?.isNew ? "animate-[fade-in-up_0.24s_ease]" : ""
@@ -347,7 +347,7 @@ const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
           e.stopPropagation();
           data?.onAddGhostDown?.();
         }}
-        className="absolute left-1/4 bottom-[-10px] -translate-x-1/2 rounded-full border border-dashed border-slate-400/70 bg-white/60 px-2 py-1 text-sm font-semibold text-slate-600 opacity-60 shadow-sm transition hover:opacity-100"
+        className="absolute left-1/4 bottom-[-10px] -translate-x-1/2 rounded-full border border-dashed border-slate-400/70 bg-white/60 px-2 py-1 text-sm font-semibold text-slate-600 opacity-0 shadow-sm transition hover:opacity-100 group-hover:opacity-70"
       >
         +
       </button>
@@ -356,11 +356,11 @@ const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
           e.stopPropagation();
           data?.onAddGhostRight?.();
         }}
-        className="absolute right-[-10px] top-1/2 -translate-y-1/2 rounded-full border border-dashed border-slate-400/70 bg-white/60 px-2 py-1 text-sm font-semibold text-slate-600 opacity-60 shadow-sm transition hover:opacity-100"
+        className="absolute right-[-10px] top-1/2 -translate-y-1/2 rounded-full border border-dashed border-slate-400/70 bg-white/60 px-2 py-1 text-sm font-semibold text-slate-600 opacity-0 shadow-sm transition hover:opacity-100 group-hover:opacity-70"
       >
         +
       </button>
-  </div>
+    </div>
   );
 };
 
@@ -401,6 +401,9 @@ export default function HomePage() {
   const [newGhostLabel, setNewGhostLabel] = useState("");
   const [newGhostPath, setNewGhostPath] = useState("");
   const handleAddGhostRelativeRef = useRef<((node: FlowNode, direction: "down" | "right") => void) | null>(null);
+  const rebuildGraphRef = useRef<
+    ((srcNodes: FlowNode[], srcEdges: FlowEdge[], expandedSet: Set<string>, viewAll: boolean) => void) | null
+  >(null);
   const expandedRef = useRef<Set<string>>(new Set());
   const showAllRef = useRef(false);
   const [showAll, setShowAll] = useState(false);
@@ -470,6 +473,36 @@ export default function HomePage() {
     };
   }, [statusMessage]);
 
+  const handleDeleteGhost = useCallback(
+    async (node: FlowNode) => {
+      if (!activeProject) return;
+      const idMatch = node.id.match(/^ghost-(\d+)/);
+      const ghostId = idMatch ? Number(idMatch[1]) : null;
+      if (!ghostId) return;
+      try {
+        const res = await fetch(`/api/projects/${activeProject.slug}/ghosts`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: ghostId }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || "Konnte Ghost Page nicht löschen.");
+        }
+        setGhostNodes((prev) => prev.filter((g) => g.id !== node.id));
+        setFullNodes((prev) => prev.filter((n) => n.id !== node.id));
+        const nextNodes = fullNodes.filter((n) => n.id !== node.id);
+        rebuildGraphRef.current?.(nextNodes, fullEdges, expandedRef.current, showAllRef.current);
+        showStatus("Ghost Page entfernt.");
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Konnte Ghost Page nicht löschen.";
+        showStatus(message);
+      }
+    },
+    [activeProject, fullEdges, fullNodes, showStatus]
+  );
+
   const applyLayout = useCallback(
     (inputNodes: FlowNode[], inputEdges: FlowEdge[]) => {
       const estimateHeight = (node: FlowNode) => {
@@ -529,15 +562,32 @@ export default function HomePage() {
         };
       });
 
-      const ghostWithSizing = ghostNodesList.map((node) => ({
-        ...node,
-        position: {
-          x: node.position?.x ?? 0,
-          y: node.position?.y ?? 0,
-        },
-        data: { ...node.data, depth: getDepth(node), cardHeight: maxHeight, cardWidth: CARD_WIDTH, isGhost: true },
-        className: [node.className, "flow-card"].filter(Boolean).join(" "),
-      }));
+      const ghostWithSizing = ghostNodesList.map((node) => {
+        let posX = node.position?.x ?? 0;
+        let posY = node.position?.y ?? 0;
+        if (posX === 0 && posY === 0) {
+          const parentPath = parentPathOf(node.data?.path);
+          const parentNode =
+            layoutedNodes.find(
+              (n) =>
+                (parentPath === "/" && n.data?.isRoot) ||
+                normalizePathValue(n.data?.path || "") === parentPath
+            ) || layoutedNodes.find((n) => n.data?.isRoot);
+          if (parentNode) {
+            posX = parentNode.position.x;
+            posY = parentNode.position.y + maxHeight + 80;
+          }
+        }
+        return {
+          ...node,
+          position: {
+            x: posX,
+            y: posY,
+          },
+          data: { ...node.data, depth: getDepth(node), cardHeight: maxHeight, cardWidth: CARD_WIDTH, isGhost: true },
+          className: [node.className, "flow-card"].filter(Boolean).join(" "),
+        };
+      });
 
       const ghostEdges: FlowEdge[] = ghostNodesList.map((g) => {
         const parentPath = parentPathOf(g.data?.path);
@@ -692,6 +742,7 @@ export default function HomePage() {
             },
             onAddGhostDown: () => handleAddGhostRelativeRef.current?.(node, "down"),
             onAddGhostRight: () => handleAddGhostRelativeRef.current?.(node, "right"),
+            onDeleteGhost: () => handleDeleteGhost(node),
           },
         }));
 
@@ -700,7 +751,7 @@ export default function HomePage() {
       setEdges(layout.edges);
       prevVisibleRef.current = visibleIds;
     },
-    [applyLayout]
+    [applyLayout, handleDeleteGhost]
   );
 
   const loadKeywords = useCallback(
@@ -1224,7 +1275,8 @@ export default function HomePage() {
 
   useEffect(() => {
     handleAddGhostRelativeRef.current = handleAddGhostRelative;
-  }, [handleAddGhostRelative]);
+    rebuildGraphRef.current = rebuildGraph;
+  }, [handleAddGhostRelative, rebuildGraph]);
 
   const handleUpdateGhostPosition = useCallback(
     async (node: FlowNode) => {
