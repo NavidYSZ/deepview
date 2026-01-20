@@ -938,7 +938,8 @@ export default function HomePage() {
 
   useEffect(() => {
     loadProjects(true);
-  }, [loadProjects]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // initial load only
 
   const handleCreateProject = async (name: string, domain: string, autoCrawl = true) => {
     const trimmedName = name.trim();
