@@ -22,6 +22,8 @@ type FlowNode = Node<{
   hasChildren?: boolean;
   expanded?: boolean;
   onToggle?: () => void;
+  onAddGhostDown?: () => void;
+  onAddGhostRight?: () => void;
   isNew?: boolean;
   statusCode?: number;
   unreachable?: boolean;
@@ -210,6 +212,24 @@ const GhostNode = ({ data }: NodeProps<FlowNode["data"]>) => {
           </div>
         )}
       </div>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          data?.onAddGhostDown?.();
+        }}
+        className="absolute left-1/2 bottom-[-10px] -translate-x-1/2 rounded-full border border-dashed border-slate-400/70 bg-white/60 px-2 py-1 text-sm font-semibold text-slate-600 opacity-60 shadow-sm transition hover:opacity-100"
+      >
+        +
+      </button>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          data?.onAddGhostRight?.();
+        }}
+        className="absolute right-[-10px] top-1/2 -translate-y-1/2 rounded-full border border-dashed border-slate-400/70 bg-white/60 px-2 py-1 text-sm font-semibold text-slate-600 opacity-60 shadow-sm transition hover:opacity-100"
+      >
+        +
+      </button>
     </div>
   );
 };
@@ -233,6 +253,15 @@ const normalizePathValue = (value?: string | null) => {
     path = path.slice(0, -1);
   }
   return path || "/";
+};
+
+const parentPathOf = (value?: string | null) => {
+  const path = normalizePathValue(value);
+  if (path === "/") return "/";
+  const segments = path.replace(/^\/+/, "").split("/").filter(Boolean);
+  if (segments.length <= 1) return "/";
+  const parent = `/${segments.slice(0, -1).join("/")}`;
+  return parent || "/";
 };
 
 const toolbarPlaceholders = ["↔", "🔍", "⟳", "◇", "⚡", "≡"];
@@ -295,15 +324,33 @@ const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
           className="absolute left-1/2 top-full -mt-2 -translate-x-1/2 rounded-full bg-white px-2 py-1 text-sm leading-none text-slate-700 shadow-md ring-1 ring-slate-200 transition hover:bg-slate-50"
         >
           <span
-            className={`inline-block transition-transform ${
-              data?.expanded ? "rotate-180" : "rotate-0"
-            }`}
-          >
-            ▼
-          </span>
-        </button>
-      )}
-    </div>
+          className={`inline-block transition-transform ${
+            data?.expanded ? "rotate-180" : "rotate-0"
+          }`}
+        >
+          ▼
+        </span>
+      </button>
+    )}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          data?.onAddGhostDown?.();
+        }}
+        className="absolute left-1/2 bottom-[-10px] -translate-x-1/2 rounded-full border border-dashed border-slate-400/70 bg-white/60 px-2 py-1 text-sm font-semibold text-slate-600 opacity-60 shadow-sm transition hover:opacity-100"
+      >
+        +
+      </button>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          data?.onAddGhostRight?.();
+        }}
+        className="absolute right-[-10px] top-1/2 -translate-y-1/2 rounded-full border border-dashed border-slate-400/70 bg-white/60 px-2 py-1 text-sm font-semibold text-slate-600 opacity-60 shadow-sm transition hover:opacity-100"
+      >
+        +
+      </button>
+  </div>
   );
 };
 
@@ -343,6 +390,7 @@ export default function HomePage() {
   const [ghostNodes, setGhostNodes] = useState<FlowNode[]>([]);
   const [newGhostLabel, setNewGhostLabel] = useState("");
   const [newGhostPath, setNewGhostPath] = useState("");
+  const handleAddGhostRelativeRef = useRef<((node: FlowNode, direction: "down" | "right") => void) | null>(null);
   const expandedRef = useRef<Set<string>>(new Set());
   const showAllRef = useRef(false);
   const [showAll, setShowAll] = useState(false);
@@ -614,6 +662,8 @@ export default function HomePage() {
               });
               rebuildGraph(srcNodes, srcEdges, nextExpanded, false);
             },
+            onAddGhostDown: () => handleAddGhostRelativeRef.current?.(node, "down"),
+            onAddGhostRight: () => handleAddGhostRelativeRef.current?.(node, "right"),
           },
         }));
 
@@ -1040,42 +1090,113 @@ export default function HomePage() {
     }
   };
 
+  const addGhostNodeToState = useCallback(
+    (node: FlowNode) => {
+      setGhostNodes((prevGhosts) => {
+        const filtered = prevGhosts.filter((g) => g.id !== node.id);
+        const updatedGhosts = [...filtered, node];
+        setFullNodes((prevFull) => {
+          const base = prevFull.filter((n) => !n.data?.isGhost);
+          const combined = [...base, ...updatedGhosts];
+          rebuildGraph(combined, fullEdges, expandedRef.current, showAllRef.current);
+          return combined;
+        });
+        return updatedGhosts;
+      });
+    },
+    [fullEdges, rebuildGraph]
+  );
+
+  const createGhostAndAdd = useCallback(
+    async (payload: { label: string; path: string; x: number; y: number; domain?: string | null }) => {
+      if (!activeProject) {
+        showStatus("Bitte zuerst ein Projekt auswählen.");
+        return null;
+      }
+      const label = payload.label || "Ghost Page";
+      const path = payload.path || "/";
+      const domainToUse =
+        payload.domain ||
+        activeDomain ||
+        domains.find((d) => d.isPrimary)?.hostname ||
+        domains[0]?.hostname ||
+        null;
+
+      try {
+        const res = await fetch(`/api/projects/${activeProject.slug}/ghosts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            label,
+            path,
+            x: payload.x,
+            y: payload.y,
+            domain: domainToUse,
+          }),
+        });
+        const data: { ghost: GhostPage; error?: string } = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || "Konnte Ghost Page nicht anlegen.");
+        }
+        const node: FlowNode = {
+          id: `ghost-${data.ghost.id}`,
+          data: { label: data.ghost.label, path: data.ghost.path, isGhost: true },
+          position: { x: data.ghost.x ?? 0, y: data.ghost.y ?? 0 },
+          type: "ghost",
+        };
+        addGhostNodeToState(node);
+        setNewGhostLabel("");
+        setNewGhostPath("");
+        showStatus("Ghost Page hinzugefügt.");
+        return node;
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Konnte Ghost Page nicht anlegen.";
+        showStatus(message);
+        return null;
+      }
+    },
+    [activeDomain, activeProject, addGhostNodeToState, domains, showStatus]
+  );
+
   const handleAddGhost = async () => {
-    if (!activeProject) {
-      showStatus("Bitte zuerst ein Projekt auswählen.");
-      return;
-    }
     const label = newGhostLabel.trim() || "Ghost Page";
     const path = newGhostPath.trim() || "/";
-    try {
-      const res = await fetch(`/api/projects/${activeProject.slug}/ghosts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ label, path, x: 0, y: 0, domain: activeDomain }),
-      });
-      const data: { ghost: GhostPage; error?: string } = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.error || "Konnte Ghost Page nicht anlegen.");
-      }
-      const node: FlowNode = {
-        id: `ghost-${data.ghost.id}`,
-        data: { label: data.ghost.label, path: data.ghost.path, isGhost: true },
-        position: { x: data.ghost.x ?? 0, y: data.ghost.y ?? 0 },
-        type: "ghost",
-      };
-      setGhostNodes((prev) => [...prev, node]);
-      const combined = [...fullNodes.filter((n) => !n.data?.isGhost), ...[...ghostNodes, node]];
-      setFullNodes(combined);
-      rebuildGraph(combined, fullEdges, expandedRef.current, showAllRef.current);
-      setNewGhostLabel("");
-      setNewGhostPath("");
-      showStatus("Ghost Page hinzugefügt.");
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Konnte Ghost Page nicht anlegen.";
-      showStatus(message);
-    }
+    await createGhostAndAdd({ label, path, x: 0, y: 0, domain: activeDomain || undefined });
   };
+
+  const handleAddGhostRelative = useCallback(
+    (node: FlowNode, direction: "down" | "right") => {
+      const basePos =
+        nodes.find((n) => n.id === node.id)?.position || node.position || { x: 0, y: 0 };
+      const basePath = normalizePathValue(node.data?.path || "/");
+      const timestamp = Date.now();
+      const childPath =
+        direction === "down"
+          ? normalizePathValue(basePath === "/" ? `/ghost-${timestamp}` : `${basePath}/ghost-${timestamp}`)
+          : normalizePathValue(
+              `${parentPathOf(basePath) === "/" ? "" : parentPathOf(basePath)}/ghost-${timestamp}`
+            );
+      const offsetY = (node.data?.cardHeight || CARD_MIN_HEIGHT) + 120;
+      const offsetX = CARD_WIDTH + 140;
+      const targetPos =
+        direction === "down"
+          ? { x: basePos.x, y: basePos.y + offsetY }
+          : { x: basePos.x + offsetX, y: basePos.y };
+      createGhostAndAdd({
+        label: "Ghost Page",
+        path: childPath,
+        x: targetPos.x,
+        y: targetPos.y,
+        domain: activeDomain || undefined,
+      });
+    },
+    [activeDomain, createGhostAndAdd, nodes]
+  );
+
+  useEffect(() => {
+    handleAddGhostRelativeRef.current = handleAddGhostRelative;
+  }, [handleAddGhostRelative]);
 
   const handleUpdateGhostPosition = useCallback(
     async (node: FlowNode) => {
