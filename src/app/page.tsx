@@ -514,12 +514,10 @@ export default function HomePage() {
         return Math.max(CARD_MIN_HEIGHT, base + labelLines * 18 + pathLines * 14);
       };
 
-      const dagreNodes = inputNodes.filter((n) => !n.data?.isGhost);
       const ghostNodesList = inputNodes.filter((n) => n.data?.isGhost);
-
       const maxHeight =
-        dagreNodes.length > 0
-          ? Math.max(CARD_MIN_HEIGHT, ...dagreNodes.map((n) => estimateHeight(n)))
+        inputNodes.length > 0
+          ? Math.max(CARD_MIN_HEIGHT, ...inputNodes.map((n) => estimateHeight(n)))
           : CARD_MIN_HEIGHT;
 
       const g = new dagre.graphlib.Graph();
@@ -532,11 +530,10 @@ export default function HomePage() {
         marginy: 40,
       });
 
-      dagreNodes.forEach((node) => {
+      inputNodes.forEach((node) => {
         g.setNode(node.id, { width: CARD_WIDTH, height: maxHeight });
       });
       inputEdges.forEach((edge) => {
-        if (edge.source.startsWith("ghost-") || edge.target.startsWith("ghost-")) return;
         g.setEdge(edge.source, edge.target);
       });
 
@@ -549,42 +546,22 @@ export default function HomePage() {
         return segs.length;
       };
 
-      const layoutedNodes = dagreNodes.map((node) => {
+      const layoutedNodes = inputNodes.map((node) => {
         const pos = g.node(node.id);
+        const hasManualPos =
+          node.data?.isGhost &&
+          node.position &&
+          (node.position.x !== 0 || node.position.y !== 0);
+        const finalPos = hasManualPos
+          ? node.position
+          : {
+              x: pos.x - CARD_WIDTH / 2,
+              y: pos.y - maxHeight / 2,
+            };
         return {
           ...node,
-          position: {
-            x: pos.x - CARD_WIDTH / 2,
-            y: pos.y - maxHeight / 2,
-          },
+          position: finalPos,
           data: { ...node.data, depth: getDepth(node), cardHeight: maxHeight, cardWidth: CARD_WIDTH },
-          className: [node.className, "flow-card"].filter(Boolean).join(" "),
-        };
-      });
-
-      const ghostWithSizing = ghostNodesList.map((node) => {
-        let posX = node.position?.x ?? 0;
-        let posY = node.position?.y ?? 0;
-        if (posX === 0 && posY === 0) {
-          const parentPath = parentPathOf(node.data?.path);
-          const parentNode =
-            layoutedNodes.find(
-              (n) =>
-                (parentPath === "/" && n.data?.isRoot) ||
-                normalizePathValue(n.data?.path || "") === parentPath
-            ) || layoutedNodes.find((n) => n.data?.isRoot);
-          if (parentNode) {
-            posX = parentNode.position.x;
-            posY = parentNode.position.y + maxHeight + 80;
-          }
-        }
-        return {
-          ...node,
-          position: {
-            x: posX,
-            y: posY,
-          },
-          data: { ...node.data, depth: getDepth(node), cardHeight: maxHeight, cardWidth: CARD_WIDTH, isGhost: true },
           className: [node.className, "flow-card"].filter(Boolean).join(" "),
         };
       });
@@ -592,11 +569,11 @@ export default function HomePage() {
       const ghostEdges: FlowEdge[] = ghostNodesList.map((g) => {
         const parentPath = parentPathOf(g.data?.path);
         const parentNode =
-          dagreNodes.find(
+          layoutedNodes.find(
             (n) =>
               (parentPath === "/" && n.data?.isRoot) ||
               normalizePathValue(n.data?.path || "") === parentPath
-          ) || dagreNodes.find((n) => n.data?.isRoot);
+          ) || layoutedNodes.find((n) => n.data?.isRoot);
         const sourceId = parentNode?.id || "root";
         return {
           id: `ghost-edge-${sourceId}-${g.id}`,
@@ -618,7 +595,7 @@ export default function HomePage() {
         return acc;
       }, {});
 
-      const layouted = [...layoutedNodes, ...ghostWithSizing].map((n) => ({ ...n }));
+      const layouted = layoutedNodes.map((n) => ({ ...n }));
       const edgesWithStyle = layoutedEdges.map((e) => ({ ...e }));
 
       const wrappedTargets = new Set<string>();
