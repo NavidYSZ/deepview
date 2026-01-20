@@ -775,21 +775,21 @@ export default function HomePage() {
     async (slug: string) => {
       try {
         const res = await fetch(`/api/projects/${slug}/ghosts`, { cache: "no-store" });
-    const data: GhostsResponse = await res.json();
+        const data: GhostsResponse = await res.json();
     if (!res.ok) {
       throw new Error(data?.error || "Konnte Ghost Pages nicht laden.");
     }
-    const nodes = (data.ghosts || []).map<FlowNode>((g) => ({
-      id: `ghost-${g.id}`,
-      data: {
-        label: g.label,
-        path: g.path,
-        isGhost: true,
-        isManualPosition: Boolean(g.meta?.manualPosition),
-      },
-      position: { x: g.x ?? 0, y: g.y ?? 0 },
-      type: "ghost",
-    }));
+        const nodes = (data.ghosts || []).map<FlowNode>((g) => ({
+          id: `ghost-${g.id}`,
+          data: {
+            label: g.label,
+            path: g.path,
+            isGhost: true,
+            isManualPosition: Boolean(g.meta?.manualPosition),
+          },
+          position: { x: g.x ?? 0, y: g.y ?? 0 },
+          type: "ghost",
+        }));
         setGhostNodes(nodes);
         return nodes;
       } catch (error) {
@@ -1180,7 +1180,14 @@ export default function HomePage() {
   );
 
   const createGhostAndAdd = useCallback(
-    async (payload: { label: string; path: string; x: number; y: number; domain?: string | null }) => {
+    async (payload: {
+      label: string;
+      path: string;
+      x: number;
+      y: number;
+      domain?: string | null;
+      manualPosition?: boolean;
+    }) => {
       if (!activeProject) {
         showStatus("Bitte zuerst ein Projekt auswählen.");
         return null;
@@ -1204,6 +1211,7 @@ export default function HomePage() {
             x: payload.x,
             y: payload.y,
             domain: domainToUse,
+            manualPosition: payload.manualPosition || false,
           }),
         });
         const data: { ghost: GhostPage; error?: string } = await res.json();
@@ -1212,7 +1220,12 @@ export default function HomePage() {
         }
         const node: FlowNode = {
           id: `ghost-${data.ghost.id}`,
-          data: { label: data.ghost.label, path: data.ghost.path, isGhost: true },
+          data: {
+            label: data.ghost.label,
+            path: data.ghost.path,
+            isGhost: true,
+            isManualPosition: payload.manualPosition || Boolean(data.ghost.meta?.manualPosition),
+          },
           position: { x: data.ghost.x ?? 0, y: data.ghost.y ?? 0 },
           type: "ghost",
         };
@@ -1240,6 +1253,8 @@ export default function HomePage() {
   const handleAddGhostRelative = useCallback(
     (node: FlowNode, direction: "down" | "right") => {
       const basePath = normalizePathValue(node.data?.path || "/");
+      const basePos =
+        nodes.find((n) => n.id === node.id)?.position || node.position || { x: 0, y: 0 };
       const timestamp = Date.now();
       const childPath =
         direction === "down"
@@ -1247,15 +1262,21 @@ export default function HomePage() {
           : normalizePathValue(
             `${parentPathOf(basePath) === "/" ? "" : parentPathOf(basePath)}/ghost-${timestamp}`
           );
+      const offsetX = CARD_WIDTH + 140;
+      const targetPos =
+        direction === "right"
+          ? { x: basePos.x + offsetX, y: basePos.y }
+          : { x: 0, y: 0 };
       createGhostAndAdd({
         label: "Ghost Page",
         path: childPath,
-        x: 0,
-        y: 0,
+        x: targetPos.x,
+        y: targetPos.y,
+        manualPosition: direction === "right",
         domain: activeDomain || undefined,
       });
     },
-    [activeDomain, createGhostAndAdd]
+    [activeDomain, createGhostAndAdd, nodes]
   );
 
   useEffect(() => {

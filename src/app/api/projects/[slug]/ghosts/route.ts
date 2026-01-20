@@ -60,6 +60,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const x = Number(body?.x ?? 0) || 0;
     const y = Number(body?.y ?? 0) || 0;
     const domainInput = (body?.domain as string | undefined)?.trim();
+    const manualPosition = Boolean(body?.manualPosition);
 
     let domainId: number | null = null;
     if (domainInput) {
@@ -75,7 +76,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       if (primary) domainId = primary.id;
     }
 
-    const ghost = createGhostPage(projectData.project.id, domainId, path, label, { x, y });
+    const meta = manualPosition ? { manualPosition: true } : {};
+    const ghost = createGhostPage(projectData.project.id, domainId, path, label, { x, y }, meta);
     return NextResponse.json({ ghost });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unbekannter Fehler beim Erstellen.";
