@@ -274,6 +274,27 @@ const parentPathOf = (value?: string | null) => {
   return parent || "/";
 };
 
+const buildGhostEdges = (nodes: FlowNode[]) => {
+  const pathToId = new Map<string, string>();
+  nodes.forEach((n) => {
+    const key = n.data?.isRoot ? "/" : normalizePathValue(n.data?.path || "");
+    pathToId.set(key, n.id);
+  });
+  return nodes
+    .filter((n) => n.data?.isGhost)
+    .map<FlowEdge>((g) => {
+      const parentPath = parentPathOf(g.data?.path);
+      const sourceId = pathToId.get(parentPath) || "root";
+      return {
+        id: `ghost-edge-${sourceId}-${g.id}`,
+        source: sourceId,
+        target: g.id,
+        type: "smoothstep",
+        style: { stroke: "rgba(0,0,0,0.4)", strokeWidth: 2, strokeDasharray: "4 4" },
+      };
+    });
+};
+
 const toolbarPlaceholders = ["↔", "🔍", "⟳", "◇", "⚡", "≡"];
 
 const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
@@ -514,7 +535,9 @@ export default function HomePage() {
         return Math.max(CARD_MIN_HEIGHT, base + labelLines * 18 + pathLines * 14);
       };
 
-      const ghostNodesList = inputNodes.filter((n) => n.data?.isGhost);
+      const ghostEdges = buildGhostEdges(inputNodes);
+      const combinedEdges = [...inputEdges, ...ghostEdges];
+
       const maxHeight =
         inputNodes.length > 0
           ? Math.max(CARD_MIN_HEIGHT, ...inputNodes.map((n) => estimateHeight(n)))
@@ -533,7 +556,7 @@ export default function HomePage() {
       inputNodes.forEach((node) => {
         g.setNode(node.id, { width: CARD_WIDTH, height: maxHeight });
       });
-      inputEdges.forEach((edge) => {
+      combinedEdges.forEach((edge) => {
         g.setEdge(edge.source, edge.target);
       });
 
@@ -566,25 +589,7 @@ export default function HomePage() {
         };
       });
 
-      const ghostEdges: FlowEdge[] = ghostNodesList.map((g) => {
-        const parentPath = parentPathOf(g.data?.path);
-        const parentNode =
-          layoutedNodes.find(
-            (n) =>
-              (parentPath === "/" && n.data?.isRoot) ||
-              normalizePathValue(n.data?.path || "") === parentPath
-          ) || layoutedNodes.find((n) => n.data?.isRoot);
-        const sourceId = parentNode?.id || "root";
-        return {
-          id: `ghost-edge-${sourceId}-${g.id}`,
-          source: sourceId,
-          target: g.id,
-          type: "smoothstep",
-          style: { stroke: "rgba(0,0,0,0.4)", strokeWidth: 2, strokeDasharray: "4 4" },
-        };
-      });
-
-      const layoutedEdges = [...inputEdges, ...ghostEdges].map((edge) => ({
+      const layoutedEdges = combinedEdges.map((edge) => ({
         ...edge,
         type: "smoothstep",
       }));
@@ -657,10 +662,13 @@ export default function HomePage() {
 
   const rebuildGraph = useCallback(
     (srcNodes: FlowNode[], srcEdges: FlowEdge[], expandedSet: Set<string>, viewAll: boolean) => {
+      const ghostEdges = buildGhostEdges(srcNodes);
+      const combinedEdges = [...srcEdges, ...ghostEdges];
+
       const parentMap: Record<string, string | undefined> = {};
       const childrenMapFull: Record<string, string[]> = {};
 
-      srcEdges.forEach((edge) => {
+      combinedEdges.forEach((edge) => {
         parentMap[edge.target] = edge.source;
         childrenMapFull[edge.source] = childrenMapFull[edge.source] || [];
         childrenMapFull[edge.source].push(edge.target);
@@ -670,7 +678,6 @@ export default function HomePage() {
         if (viewAll) return true;
         const node = srcNodes.find((n) => n.id === nodeId);
         if (!node) return false;
-        if (node.data?.isGhost) return true;
         const depth = depthFromNode(node);
         if (depth <= 1) return true;
 
@@ -687,7 +694,7 @@ export default function HomePage() {
 
       const visibleNodes = srcNodes.filter((node) => isVisible(node.id));
       const visibleIds = new Set(visibleNodes.map((n) => n.id));
-      const visibleEdges = srcEdges.filter(
+      const visibleEdges = combinedEdges.filter(
         (edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target)
       );
 
