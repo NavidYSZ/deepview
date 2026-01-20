@@ -26,6 +26,8 @@ type FlowNode = Node<{
   metaTitle?: string;
   metaDescription?: string;
   h1?: string;
+  cardHeight?: number;
+  cardWidth?: number;
 }>;
 type FlowEdge = Edge;
 
@@ -125,6 +127,11 @@ type KeywordImportResponse = {
   error?: string;
 };
 
+const stripWww = (host: string) => host.replace(/^www\./i, "");
+
+const CARD_WIDTH = 220;
+const CARD_MIN_HEIGHT = 120;
+
 const normalizePathValue = (value?: string | null) => {
   const trimmed = (value || "").trim();
   if (!trimmed) return "/";
@@ -152,14 +159,19 @@ const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
   const isError = data?.unreachable || (data?.statusCode ?? 200) >= 400;
   const borderColor = isError ? "#ef4444" : data?.isRoot ? "#8f6cff" : "#2f6bff";
   const showToggle = data?.hasChildren;
+  const cardHeight = Math.max(data?.cardHeight || 0, CARD_MIN_HEIGHT);
 
   return (
     <div className="relative">
       <div
-        className={`group flex h-24 w-48 flex-col rounded-2xl bg-white px-4 py-3 shadow-[0_8px_24px_rgba(47,107,255,0.08)] ${
+        className={`group flex w-full flex-col rounded-2xl bg-white px-4 py-3 shadow-[0_8px_24px_rgba(47,107,255,0.08)] ${
           data?.isNew ? "animate-[fade-in-up_0.24s_ease]" : ""
         }`}
-        style={{ border: `2px solid ${borderColor}` }}
+        style={{
+          border: `2px solid ${borderColor}`,
+          minHeight: cardHeight,
+          width: CARD_WIDTH,
+        }}
       >
         <div className="flex items-center gap-1">
           <span className="h-1.5 w-1.5 rounded-full bg-[#2f6bff]" />
@@ -175,7 +187,7 @@ const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
           {data?.label || "Page"}
         </div>
         {data?.path && (
-          <div className="mt-1 text-[11px] uppercase tracking-[0.22em] text-slate-400">
+          <div className="mt-1 max-w-full break-all text-[10px] uppercase leading-tight tracking-[0.18em] text-slate-400">
             {data.path}
           </div>
         )}
@@ -293,6 +305,20 @@ export default function HomePage() {
 
   const applyLayout = useCallback(
     (inputNodes: FlowNode[], inputEdges: FlowEdge[]) => {
+      const estimateHeight = (node: FlowNode) => {
+        const labelLen = node.data?.label?.length || 0;
+        const pathLen = node.data?.path?.length || 0;
+        const labelLines = Math.max(1, Math.ceil(labelLen / 22));
+        const pathLines = pathLen ? Math.max(1, Math.ceil(pathLen / 26)) : 0;
+        const base = 70;
+        return Math.max(CARD_MIN_HEIGHT, base + labelLines * 18 + pathLines * 14);
+      };
+
+      const maxHeight =
+        inputNodes.length > 0
+          ? Math.max(CARD_MIN_HEIGHT, ...inputNodes.map((n) => estimateHeight(n)))
+          : CARD_MIN_HEIGHT;
+
       const g = new dagre.graphlib.Graph();
       g.setDefaultEdgeLabel(() => ({}));
       g.setGraph({
@@ -304,7 +330,7 @@ export default function HomePage() {
       });
 
       inputNodes.forEach((node) => {
-        g.setNode(node.id, { width: 200, height: 120 });
+        g.setNode(node.id, { width: CARD_WIDTH, height: maxHeight });
       });
       inputEdges.forEach((edge) => {
         g.setEdge(edge.source, edge.target);
@@ -324,10 +350,10 @@ export default function HomePage() {
         return {
           ...node,
           position: {
-            x: pos.x - 100,
-            y: pos.y - 60,
+            x: pos.x - CARD_WIDTH / 2,
+            y: pos.y - maxHeight / 2,
           },
-          data: { ...node.data, depth: getDepth(node) },
+          data: { ...node.data, depth: getDepth(node), cardHeight: maxHeight, cardWidth: CARD_WIDTH },
           className: [node.className, "flow-card"].filter(Boolean).join(" "),
         };
       });
@@ -348,7 +374,7 @@ export default function HomePage() {
 
       const wrappedTargets = new Set<string>();
       const xGap = 240;
-      const yGap = 160;
+      const yGap = maxHeight + 80;
 
       Object.entries(childrenByParent).forEach(([parentId, childIds]) => {
         if (childIds.length <= 4) return;
@@ -358,7 +384,7 @@ export default function HomePage() {
         if (parentDepth <= 1) return;
 
         const centerX = parentNode.position.x + 100;
-        const baseY = parentNode.position.y + 200;
+        const baseY = parentNode.position.y + maxHeight + 80;
         const rows = Math.ceil(childIds.length / 4);
 
         childIds.forEach((childId, idx) => {
@@ -638,11 +664,6 @@ export default function HomePage() {
   };
 
   const handleCrawl = async () => {
-    if (!activeProject) {
-      showStatus("Bitte zuerst ein Projekt auswählen oder erstellen.");
-      return;
-    }
-
     const domainToUse =
       domainInput.trim() ||
       domains.find((d) => d.isPrimary)?.hostname ||
@@ -651,6 +672,29 @@ export default function HomePage() {
 
     if (!domainToUse) {
       showStatus("Bitte eine Domain eingeben.");
+      return;
+    }
+
+    const deriveHostname = (input: string) => {
+      try {
+        const prefixed = input.startsWith("http") ? input : `https://${input}`;
+        return new URL(prefixed).hostname;
+      } catch {
+        return input;
+      }
+    };
+
+    const host = deriveHostname(domainToUse);
+    const hasProjectForHost = projects.some(
+      (p) => p.primaryDomain && stripWww(p.primaryDomain) === stripWww(host)
+    );
+
+    if (!activeProject || !hasProjectForHost) {
+      setNewProjectDomain(domainToUse);
+      setNewProjectName(host);
+      setOverviewOpen(true);
+      setNewProjectOpen(true);
+      showStatus("Projekt anlegen, um die Domain zu crawlen.");
       return;
     }
 
@@ -967,15 +1011,6 @@ export default function HomePage() {
         </div>
       </div>
 
-      <div className="absolute inset-x-0 bottom-14 flex items-center justify-center gap-6 text-xs font-medium text-slate-500">
-        {activeSnapshot && (
-          <span>
-            Snapshot: {new Date(activeSnapshot.createdAt).toLocaleString()} • {activeDomain || "—"}
-          </span>
-        )}
-        {!activeSnapshot && activeProject && <span>Kein Snapshot vorhanden.</span>}
-      </div>
-
       <div className="absolute left-6 bottom-6 flex items-center">
         <button
           onClick={() => setOverviewOpen((v) => !v)}
@@ -1026,6 +1061,12 @@ export default function HomePage() {
             <p className="text-xs text-slate-500">
               Domain: {activeDomain || domains[0]?.hostname || "—"}
             </p>
+            {activeSnapshot && (
+              <p className="text-[11px] text-slate-500">
+                Snapshot: {new Date(activeSnapshot.createdAt).toLocaleString()} •{" "}
+                {activeDomain || "—"}
+              </p>
+            )}
           </div>
 
           <div className="flex items-center justify-between">
