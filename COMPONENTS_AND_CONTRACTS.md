@@ -31,6 +31,7 @@ Goal: Snapshot of the moving parts (UI, crawler, DB, APIs, contracts) for projec
 - Tables: `projects`, `domains`, `project_features`, `snapshots`, `snapshot_blobs`, `pages`, `keyword_imports`, `keywords`, `metrics`, `events`.
   - Snapshots store meta + payload JSON; pages table is normalized (path/depth/title/status).
   - Keywords: per project/domain/path with volume/difficulty/position + meta, linked to imports.
+  - Node suggestions: `node_suggestions` per project/path/field with value and timestamps.
   - Legacy migration: old `projects` table is renamed `projects_legacy`; latest row imported as project+snapshot.
 - Helpers:
   - `createProject(name, domain, slug?, settings?)`
@@ -46,6 +47,9 @@ Goal: Snapshot of the moving parts (UI, crawler, DB, APIs, contracts) for projec
   - `createKeywordImport(projectId, domainId, source, fileName, meta)`
   - `saveKeywords(projectId, importId, rows)`
   - `getKeywords(projectId, { path?, domainId? })`
+  - `addNodeSuggestion(projectId, domainId, path, field, value)`
+  - `listNodeSuggestions(projectId, { path?, domainId? })`
+  - `deleteNodeSuggestion(projectId, id)`
 
 ## API Routes
 - **GET /api/projects** — Projektliste mit Primärdomain + letztem Snapshot-Stempel.
@@ -55,6 +59,9 @@ Goal: Snapshot of the moving parts (UI, crawler, DB, APIs, contracts) for projec
 - **GET /api/projects/{slug}/snapshots?source=crawler** — Snapshot-Metadaten.
 - **GET /api/projects/{slug}/keywords** — Optional `domain`, `path` Filter; liefert gespeicherte Keywords.
 - **POST /api/projects/{slug}/keywords** — FormData-Upload (CSV/TSV/XLSX) oder JSON; speichert Keywords pro Pfad/Domain.
+- **GET /api/projects/{slug}/suggestions** — Optional `path`, `domain`; liefert Vorschläge zu Meta/H1.
+- **POST /api/projects/{slug}/suggestions** — Body `{ path, field: "metaTitle"|"metaDescription"|"h1", value, domain? }`.
+- **DELETE /api/projects/{slug}/suggestions** — Body `{ id }` zum Entfernen eines Vorschlags.
 - **Compat:** `POST /api/crawl` auto-creates/finds project by domain and stores snapshot; `GET /api/projects/latest` returns first available crawler snapshot if any.
 
 ## Data Contracts

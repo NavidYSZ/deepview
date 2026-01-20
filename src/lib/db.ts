@@ -81,6 +81,16 @@ export type Keyword = {
   createdAt: string;
 };
 
+export type NodeSuggestion = {
+  id: number;
+  projectId: number;
+  domainId: number | null;
+  path: string;
+  field: "metaTitle" | "metaDescription" | "h1";
+  value: string;
+  createdAt: string;
+};
+
 const dbFile = path.join(process.cwd(), "data.sqlite");
 
 if (!fs.existsSync(dbFile)) {
@@ -217,6 +227,17 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_keywords_project ON keywords(projectId);
   CREATE INDEX IF NOT EXISTS idx_keywords_path ON keywords(projectId, path);
+  CREATE TABLE IF NOT EXISTS node_suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    projectId INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    domainId INTEGER REFERENCES domains(id),
+    path TEXT NOT NULL,
+    field TEXT NOT NULL,
+    value TEXT NOT NULL,
+    createdAt TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_node_suggestions_project ON node_suggestions(projectId);
+  CREATE INDEX IF NOT EXISTS idx_node_suggestions_path ON node_suggestions(projectId, path);
 `);
 
 type LegacyProjectRow = {
@@ -825,4 +846,53 @@ export function getKeywords(
     ...row,
     meta: safeParse(row.meta) || {},
   }));
+}
+
+export function addNodeSuggestion(
+  projectId: number,
+  domainId: number | null,
+  path: string,
+  field: "metaTitle" | "metaDescription" | "h1",
+  value: string
+): NodeSuggestion {
+  const normalizedPath = normalizePathValue(path);
+  const createdAt = now();
+  const stmt = db.prepare(
+    "INSERT INTO node_suggestions (projectId, domainId, path, field, value, createdAt) VALUES (?, ?, ?, ?, ?, ?)"
+  );
+  const info = stmt.run(projectId, domainId, normalizedPath, field, value, createdAt);
+  return {
+    id: Number(info.lastInsertRowid),
+    projectId,
+    domainId,
+    path: normalizedPath,
+    field,
+    value,
+    createdAt,
+  };
+}
+
+export function listNodeSuggestions(
+  projectId: number,
+  options?: { path?: string; domainId?: number | null }
+): NodeSuggestion[] {
+  const clauses = ["projectId = ?"];
+  const params: Array<number | string> = [projectId];
+  if (options?.path) {
+    clauses.push("path = ?");
+    params.push(normalizePathValue(options.path));
+  }
+  if (typeof options?.domainId === "number") {
+    clauses.push("domainId = ?");
+    params.push(options.domainId);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const rows = db
+    .prepare(`SELECT * FROM node_suggestions ${where} ORDER BY createdAt DESC`)
+    .all(...params) as NodeSuggestion[];
+  return rows;
+}
+
+export function deleteNodeSuggestion(projectId: number, id: number) {
+  db.prepare("DELETE FROM node_suggestions WHERE projectId = ? AND id = ?").run(projectId, id);
 }

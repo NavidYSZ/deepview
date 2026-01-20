@@ -127,6 +127,26 @@ type KeywordImportResponse = {
   error?: string;
 };
 
+type NodeSuggestion = {
+  id: number;
+  projectId: number;
+  domainId: number | null;
+  path: string;
+  field: "metaTitle" | "metaDescription" | "h1";
+  value: string;
+  createdAt: string;
+};
+
+type SuggestionsResponse = {
+  suggestions: NodeSuggestion[];
+  error?: string;
+};
+
+type SuggestionCreateResponse = {
+  suggestion: NodeSuggestion;
+  error?: string;
+};
+
 const stripWww = (host: string) => host.replace(/^www\./i, "");
 
 const CARD_WIDTH = 220;
@@ -253,6 +273,9 @@ export default function HomePage() {
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectDomain, setNewProjectDomain] = useState("");
+  const [suggestionsByPath, setSuggestionsByPath] = useState<Record<string, NodeSuggestion[]>>({});
+  const [editingField, setEditingField] = useState<"metaTitle" | "metaDescription" | "h1" | null>(null);
+  const [suggestionInput, setSuggestionInput] = useState("");
   const expandedRef = useRef<Set<string>>(new Set());
   const showAllRef = useRef(false);
   const [showAll, setShowAll] = useState(false);
@@ -286,6 +309,11 @@ export default function HomePage() {
     const key = normalizePathValue(selectedNode.data?.path || "/");
     return keywordsByPath[key] || [];
   }, [keywordsByPath, selectedNode]);
+  const suggestionsForSelected = useMemo(() => {
+    if (!selectedNode) return [];
+    const key = normalizePathValue(selectedNode.data?.path || "/");
+    return suggestionsByPath[key] || [];
+  }, [selectedNode, suggestionsByPath]);
 
   const showStatus = useCallback((message: string) => {
     setStatusMessage(message);
@@ -526,12 +554,37 @@ export default function HomePage() {
     [showStatus]
   );
 
+  const loadSuggestions = useCallback(
+    async (slug: string) => {
+      try {
+        const res = await fetch(`/api/projects/${slug}/suggestions`, { cache: "no-store" });
+        const data: SuggestionsResponse = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || "Konnte Vorschläge nicht laden.");
+        }
+        const byPath: Record<string, NodeSuggestion[]> = {};
+        (data.suggestions || []).forEach((s) => {
+          const key = normalizePathValue(s.path);
+          byPath[key] = byPath[key] || [];
+          byPath[key].push(s);
+        });
+        setSuggestionsByPath(byPath);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Konnte Vorschläge nicht laden.";
+        showStatus(message);
+      }
+    },
+    [showStatus]
+  );
+
   const loadProject = useCallback(
     async (slug: string) => {
       setLoadingProject(true);
       setProjectMenuOpen(false);
       try {
         setKeywordsByPath({});
+        setSuggestionsByPath({});
         const res = await fetch(`/api/projects/${slug}`, { cache: "no-store" });
         const data: ProjectDetailResponse = await res.json();
         if (!res.ok) {
@@ -571,6 +624,7 @@ export default function HomePage() {
         }
 
         await loadKeywords(data.project.slug);
+        await loadSuggestions(data.project.slug);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Konnte Projekt nicht laden.";
         showStatus(message);
@@ -578,7 +632,7 @@ export default function HomePage() {
         setLoadingProject(false);
       }
     },
-    [loadKeywords, rebuildGraph, showStatus]
+    [loadKeywords, loadSuggestions, rebuildGraph, showStatus]
   );
 
   const loadProjects = useCallback(
@@ -781,6 +835,69 @@ export default function HomePage() {
     }
   };
 
+  const handleAddSuggestion = async (
+    field: "metaTitle" | "metaDescription" | "h1",
+    value: string
+  ) => {
+    if (!activeProject || !selectedNode) {
+      showStatus("Bitte zuerst eine Seite auswählen.");
+      return;
+    }
+    const path = selectedNode.data?.path || "/";
+    try {
+      const res = await fetch(`/api/projects/${activeProject.slug}/suggestions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path,
+          field,
+          value,
+          domain: activeDomain || domains.find((d) => d.isPrimary)?.hostname,
+        }),
+      });
+      const data: SuggestionCreateResponse = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || "Konnte Vorschlag nicht speichern.");
+      }
+      const key = normalizePathValue(path);
+      setSuggestionsByPath((prev) => {
+        const current = prev[key] || [];
+        return { ...prev, [key]: [data.suggestion, ...current] };
+      });
+      setSuggestionInput("");
+      setEditingField(null);
+      showStatus("Vorschlag gespeichert.");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Konnte Vorschlag nicht speichern.";
+      showStatus(message);
+    }
+  };
+
+  const handleDeleteSuggestion = async (id: number, path: string) => {
+    if (!activeProject) return;
+    try {
+      const res = await fetch(`/api/projects/${activeProject.slug}/suggestions`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || "Konnte Vorschlag nicht löschen.");
+      }
+      const key = normalizePathValue(path);
+      setSuggestionsByPath((prev) => {
+        const current = prev[key] || [];
+        return { ...prev, [key]: current.filter((s) => s.id !== id) };
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Konnte Vorschlag nicht löschen.";
+      showStatus(message);
+    }
+  };
+
   const toggleShowAll = () => {
     const next = !showAll;
     if (!fullNodes.length) {
@@ -973,7 +1090,9 @@ export default function HomePage() {
                 className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50"
                 aria-label="Klicktiefe wählen"
               >
-                {depth === 5 ? "∞" : depth}
+                <span className={depth === 5 ? "text-lg leading-none" : ""}>
+                  {depth === 5 ? "∞" : depth}
+                </span>
               </button>
               {depthOpen && (
                 <div className="absolute bottom-12 left-1/2 z-10 w-16 -translate-x-1/2 rounded-2xl border border-slate-200 bg-white py-1 shadow-lg">
@@ -988,7 +1107,9 @@ export default function HomePage() {
                         option === depth ? "text-slate-900" : "text-slate-600"
                       }`}
                     >
-                      {option === 5 ? "∞" : option}
+                      <span className={option === 5 ? "text-lg leading-none" : ""}>
+                        {option === 5 ? "∞" : option}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -1203,26 +1324,206 @@ export default function HomePage() {
                 </div>
               )}
               <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200/80">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-                  Meta Title
-                </p>
+                <div className="flex items-start justify-between">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                    Meta Title
+                  </p>
+                  <button
+                    onClick={() => {
+                      setEditingField("metaTitle");
+                      setSuggestionInput(selectedNode.data?.metaTitle || "");
+                    }}
+                    className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-100"
+                  >
+                    ✎
+                  </button>
+                </div>
                 <p className="mt-1 text-sm text-slate-800">
                   {selectedNode.data?.metaTitle || "—"}
                 </p>
+                {editingField === "metaTitle" && (
+                  <div className="mt-2 flex flex-col gap-2 rounded-xl bg-white p-2 ring-1 ring-slate-200">
+                    <textarea
+                      value={suggestionInput}
+                      onChange={(e) => setSuggestionInput(e.target.value)}
+                      rows={2}
+                      className="w-full rounded-lg border border-slate-200 px-2 py-1 text-sm focus:border-slate-400 focus:outline-none"
+                      placeholder="Vorschlag eingeben"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => {
+                          setEditingField(null);
+                          setSuggestionInput("");
+                        }}
+                        className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+                      >
+                        Abbrechen
+                      </button>
+                      <button
+                        onClick={() => handleAddSuggestion("metaTitle", suggestionInput)}
+                        className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-500"
+                      >
+                        Speichern
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {suggestionsForSelected
+                  .filter((s) => s.field === "metaTitle")
+                  .map((s) => (
+                    <div
+                      key={s.id}
+                      className="mt-2 flex items-start justify-between gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2"
+                    >
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">
+                          Vorschlag
+                        </p>
+                        <p className="text-sm font-semibold text-emerald-800">{s.value}</p>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteSuggestion(s.id, s.path)}
+                        className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200 transition hover:bg-emerald-100"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
               </div>
               <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200/80">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-                  Meta Description
-                </p>
+                <div className="flex items-start justify-between">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                    Meta Description
+                  </p>
+                  <button
+                    onClick={() => {
+                      setEditingField("metaDescription");
+                      setSuggestionInput(selectedNode.data?.metaDescription || "");
+                    }}
+                    className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-100"
+                  >
+                    ✎
+                  </button>
+                </div>
                 <p className="mt-1 text-sm text-slate-800 leading-relaxed">
                   {selectedNode.data?.metaDescription || "—"}
                 </p>
+                {editingField === "metaDescription" && (
+                  <div className="mt-2 flex flex-col gap-2 rounded-xl bg-white p-2 ring-1 ring-slate-200">
+                    <textarea
+                      value={suggestionInput}
+                      onChange={(e) => setSuggestionInput(e.target.value)}
+                      rows={3}
+                      className="w-full rounded-lg border border-slate-200 px-2 py-1 text-sm focus:border-slate-400 focus:outline-none"
+                      placeholder="Vorschlag eingeben"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => {
+                          setEditingField(null);
+                          setSuggestionInput("");
+                        }}
+                        className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+                      >
+                        Abbrechen
+                      </button>
+                      <button
+                        onClick={() => handleAddSuggestion("metaDescription", suggestionInput)}
+                        className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-500"
+                      >
+                        Speichern
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {suggestionsForSelected
+                  .filter((s) => s.field === "metaDescription")
+                  .map((s) => (
+                    <div
+                      key={s.id}
+                      className="mt-2 flex items-start justify-between gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2"
+                    >
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">
+                          Vorschlag
+                        </p>
+                        <p className="text-sm font-semibold text-emerald-800">{s.value}</p>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteSuggestion(s.id, s.path)}
+                        className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200 transition hover:bg-emerald-100"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
               </div>
               <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200/80">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-                  H1
-                </p>
+                <div className="flex items-start justify-between">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+                    H1
+                  </p>
+                  <button
+                    onClick={() => {
+                      setEditingField("h1");
+                      setSuggestionInput(selectedNode.data?.h1 || "");
+                    }}
+                    className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:bg-slate-100"
+                  >
+                    ✎
+                  </button>
+                </div>
                 <p className="mt-1 text-sm text-slate-800">{selectedNode.data?.h1 || "—"}</p>
+                {editingField === "h1" && (
+                  <div className="mt-2 flex flex-col gap-2 rounded-xl bg-white p-2 ring-1 ring-slate-200">
+                    <textarea
+                      value={suggestionInput}
+                      onChange={(e) => setSuggestionInput(e.target.value)}
+                      rows={2}
+                      className="w-full rounded-lg border border-slate-200 px-2 py-1 text-sm focus:border-slate-400 focus:outline-none"
+                      placeholder="Vorschlag eingeben"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => {
+                          setEditingField(null);
+                          setSuggestionInput("");
+                        }}
+                        className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+                      >
+                        Abbrechen
+                      </button>
+                      <button
+                        onClick={() => handleAddSuggestion("h1", suggestionInput)}
+                        className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-500"
+                      >
+                        Speichern
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {suggestionsForSelected
+                  .filter((s) => s.field === "h1")
+                  .map((s) => (
+                    <div
+                      key={s.id}
+                      className="mt-2 flex items-start justify-between gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2"
+                    >
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">
+                          Vorschlag
+                        </p>
+                        <p className="text-sm font-semibold text-emerald-800">{s.value}</p>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteSuggestion(s.id, s.path)}
+                        className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200 transition hover:bg-emerald-100"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
               </div>
               <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200/80">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
