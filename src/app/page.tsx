@@ -472,6 +472,32 @@ export default function HomePage() {
     [applyLayout]
   );
 
+  const loadKeywords = useCallback(
+    async (slug: string) => {
+      setLoadingKeywords(true);
+      try {
+        const res = await fetch(`/api/projects/${slug}/keywords`, { cache: "no-store" });
+        const data: KeywordsResponse = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || "Konnte Keywords nicht laden.");
+        }
+        const byPath: Record<string, Keyword[]> = {};
+        (data.keywords || []).forEach((kw) => {
+          const key = normalizePathValue(kw.path);
+          byPath[key] = byPath[key] || [];
+          byPath[key].push(kw);
+        });
+        setKeywordsByPath(byPath);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Konnte Keywords nicht laden.";
+        showStatus(message);
+      } finally {
+        setLoadingKeywords(false);
+      }
+    },
+    [showStatus]
+  );
+
   const loadProject = useCallback(
     async (slug: string) => {
       setLoadingProject(true);
@@ -563,32 +589,6 @@ export default function HomePage() {
       }
     },
     [activeProject, loadProject, showStatus]
-  );
-
-  const loadKeywords = useCallback(
-    async (slug: string) => {
-      setLoadingKeywords(true);
-      try {
-        const res = await fetch(`/api/projects/${slug}/keywords`, { cache: "no-store" });
-        const data: KeywordsResponse = await res.json();
-        if (!res.ok) {
-          throw new Error(data?.error || "Konnte Keywords nicht laden.");
-        }
-        const byPath: Record<string, Keyword[]> = {};
-        (data.keywords || []).forEach((kw) => {
-          const key = normalizePathValue(kw.path);
-          byPath[key] = byPath[key] || [];
-          byPath[key].push(kw);
-        });
-        setKeywordsByPath(byPath);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Konnte Keywords nicht laden.";
-        showStatus(message);
-      } finally {
-        setLoadingKeywords(false);
-      }
-    },
-    [showStatus]
   );
 
   useEffect(() => {
