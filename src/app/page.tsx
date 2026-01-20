@@ -24,6 +24,7 @@ type FlowNode = Node<{
   onToggle?: () => void;
   onAddGhostDown?: () => void;
   onAddGhostRight?: () => void;
+  onDeleteGhost?: () => void;
   isNew?: boolean;
   statusCode?: number;
   unreachable?: boolean;
@@ -230,6 +231,15 @@ const GhostNode = ({ data }: NodeProps<FlowNode["data"]>) => {
       >
         +
       </button>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          data?.onDeleteGhost?.();
+        }}
+        className="absolute right-[-8px] top-[-8px] flex h-6 w-6 items-center justify-center rounded-full border border-dashed border-red-400/70 bg-white/70 text-sm font-semibold text-red-600 opacity-0 shadow-sm transition hover:opacity-100 group-hover:opacity-80"
+      >
+        −
+      </button>
     </div>
   );
 };
@@ -337,7 +347,7 @@ const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
           e.stopPropagation();
           data?.onAddGhostDown?.();
         }}
-        className="absolute left-1/2 bottom-[-10px] -translate-x-1/2 rounded-full border border-dashed border-slate-400/70 bg-white/60 px-2 py-1 text-sm font-semibold text-slate-600 opacity-60 shadow-sm transition hover:opacity-100"
+        className="absolute left-1/4 bottom-[-10px] -translate-x-1/2 rounded-full border border-dashed border-slate-400/70 bg-white/60 px-2 py-1 text-sm font-semibold text-slate-600 opacity-60 shadow-sm transition hover:opacity-100"
       >
         +
       </button>
@@ -529,12 +539,30 @@ export default function HomePage() {
         className: [node.className, "flow-card"].filter(Boolean).join(" "),
       }));
 
-      const layoutedEdges = inputEdges.map((edge) => ({
+      const ghostEdges: FlowEdge[] = ghostNodesList.map((g) => {
+        const parentPath = parentPathOf(g.data?.path);
+        const parentNode =
+          dagreNodes.find(
+            (n) =>
+              (parentPath === "/" && n.data?.isRoot) ||
+              normalizePathValue(n.data?.path || "") === parentPath
+          ) || dagreNodes.find((n) => n.data?.isRoot);
+        const sourceId = parentNode?.id || "root";
+        return {
+          id: `ghost-edge-${sourceId}-${g.id}`,
+          source: sourceId,
+          target: g.id,
+          type: "smoothstep",
+          style: { stroke: "rgba(0,0,0,0.4)", strokeWidth: 2, strokeDasharray: "4 4" },
+        };
+      });
+
+      const layoutedEdges = [...inputEdges, ...ghostEdges].map((edge) => ({
         ...edge,
         type: "smoothstep",
       }));
 
-      const childrenByParent = inputEdges.reduce<Record<string, string[]>>((acc, edge) => {
+      const childrenByParent = layoutedEdges.reduce<Record<string, string[]>>((acc, edge) => {
         acc[edge.source] = acc[edge.source] || [];
         acc[edge.source].push(edge.target);
         return acc;
