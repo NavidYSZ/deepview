@@ -8,6 +8,7 @@ import ReactFlow, {
   Handle,
   Node,
   NodeProps,
+  PanOnScrollMode,
   Position,
 } from "reactflow";
 import "reactflow/dist/style.css";
@@ -294,6 +295,7 @@ export default function HomePage() {
   const [suggestionsByPath, setSuggestionsByPath] = useState<Record<string, NodeSuggestion[]>>({});
   const [editingField, setEditingField] = useState<"metaTitle" | "metaDescription" | "h1" | null>(null);
   const [suggestionInput, setSuggestionInput] = useState("");
+  const [keywordSort, setKeywordSort] = useState<"position" | "volume">("position");
   const expandedRef = useRef<Set<string>>(new Set());
   const showAllRef = useRef(false);
   const [showAll, setShowAll] = useState(false);
@@ -325,8 +327,23 @@ export default function HomePage() {
   const keywordsForSelected = useMemo(() => {
     if (!selectedNode) return [];
     const key = normalizePathValue(selectedNode.data?.path || "/");
-    return keywordsByPath[key] || [];
-  }, [keywordsByPath, selectedNode]);
+    const list = keywordsByPath[key] || [];
+    const sorted = [...list];
+    if (keywordSort === "position") {
+      sorted.sort((a, b) => {
+        const ap = a.position ?? Infinity;
+        const bp = b.position ?? Infinity;
+        return ap - bp;
+      });
+    } else {
+      sorted.sort((a, b) => {
+        const av = a.volume ?? -1;
+        const bv = b.volume ?? -1;
+        return bv - av;
+      });
+    }
+    return sorted;
+  }, [keywordSort, keywordsByPath, selectedNode]);
   const suggestionsForSelected = useMemo(() => {
     if (!selectedNode) return [];
     const key = normalizePathValue(selectedNode.data?.path || "/");
@@ -1063,6 +1080,10 @@ export default function HomePage() {
           minZoom={0.3}
           maxZoom={2}
           fitViewOptions={{ padding: 0.4 }}
+          panOnScroll
+          panOnScrollMode={PanOnScrollMode.Free}
+          zoomOnScroll={false}
+          zoomOnPinch
           proOptions={{ hideAttribution: true }}
           className="rounded-2xl"
           onNodeClick={(_, node) => setSelectedNode(node as FlowNode)}
@@ -1109,7 +1130,7 @@ export default function HomePage() {
                 aria-label="Klicktiefe wählen"
               >
                 {depth === 5 ? (
-                  <InfinityIcon className="h-6 w-6 text-slate-800" />
+                  <InfinityIcon className="h-6 w-6 text-slate-500" />
                 ) : (
                   <span>{depth}</span>
                 )}
@@ -1128,7 +1149,7 @@ export default function HomePage() {
                       }`}
                     >
                       {option === 5 ? (
-                        <InfinityIcon className="h-6 w-6 text-slate-800" />
+                        <InfinityIcon className="h-6 w-6 text-slate-500" />
                       ) : (
                         <span>{option}</span>
                       )}
@@ -1551,6 +1572,29 @@ export default function HomePage() {
                 <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
                   Keywords
                 </p>
+                <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-500">
+                  <span>Sortieren:</span>
+                  <button
+                    onClick={() => setKeywordSort("position")}
+                    className={`rounded-full px-2 py-1 text-xs font-semibold ring-1 transition ${
+                      keywordSort === "position"
+                        ? "bg-slate-900 text-white ring-slate-900"
+                        : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-100"
+                    }`}
+                  >
+                    Position
+                  </button>
+                  <button
+                    onClick={() => setKeywordSort("volume")}
+                    className={`rounded-full px-2 py-1 text-xs font-semibold ring-1 transition ${
+                      keywordSort === "volume"
+                        ? "bg-slate-900 text-white ring-slate-900"
+                        : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-100"
+                    }`}
+                  >
+                    SV
+                  </button>
+                </div>
                 {keywordsForSelected.length ? (
                   <div className="mt-2 flex flex-col gap-2">
                     {keywordsForSelected.map((kw) => (
@@ -1567,7 +1611,6 @@ export default function HomePage() {
                               : ""}
                           </span>
                         </div>
-                        <div className="text-xs text-slate-500">{kw.path}</div>
                       </div>
                     ))}
                   </div>
