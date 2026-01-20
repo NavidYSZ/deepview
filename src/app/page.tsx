@@ -223,7 +223,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [loadingProject, setLoadingProject] = useState(false);
-  const [depth, setDepth] = useState(1);
+  const [depth, setDepth] = useState(5);
   const [depthOpen, setDepthOpen] = useState(false);
   const [fullNodes, setFullNodes] = useState<FlowNode[]>([]);
   const [fullEdges, setFullEdges] = useState<FlowEdge[]>([]);
@@ -238,6 +238,9 @@ export default function HomePage() {
   const [keywordsByPath, setKeywordsByPath] = useState<Record<string, Keyword[]>>({});
   const [loadingKeywords, setLoadingKeywords] = useState(false);
   const [uploadingKeywords, setUploadingKeywords] = useState(false);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectDomain, setNewProjectDomain] = useState("");
   const expandedRef = useRef<Set<string>>(new Set());
   const showAllRef = useRef(false);
   const [showAll, setShowAll] = useState(false);
@@ -595,14 +598,14 @@ export default function HomePage() {
     loadProjects(true);
   }, [loadProjects]);
 
-  const handleCreateProject = async () => {
-    const name = prompt("Projektname (z. B. Kunde A)?");
-    if (!name) {
+  const handleCreateProject = async (name: string, domain: string) => {
+    const trimmedName = name.trim();
+    const trimmedDomain = domain.trim();
+    if (!trimmedName) {
       showStatus("Projektname wird benötigt.");
       return;
     }
-    const domain = prompt("Hauptdomain (z. B. example.com)?", domainInput || "example.com");
-    if (!domain) {
+    if (!trimmedDomain) {
       showStatus("Bitte Domain angeben.");
       return;
     }
@@ -612,16 +615,20 @@ export default function HomePage() {
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, domain }),
+        body: JSON.stringify({ name: trimmedName, domain: trimmedDomain }),
       });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data?.error || "Konnte Projekt nicht anlegen.");
       }
       showStatus("Projekt angelegt.");
+      setNewProjectOpen(false);
+      setNewProjectName("");
+      setNewProjectDomain("");
       await loadProjects(false);
       await loadProject(data.project.slug);
       setDomainInput(data.domain.hostname);
+      setOverviewOpen(true);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Konnte Projekt nicht anlegen.";
       showStatus(message);
@@ -812,7 +819,11 @@ export default function HomePage() {
                 </button>
               ))}
               <button
-                onClick={handleCreateProject}
+                onClick={() => {
+                  setProjectMenuOpen(false);
+                  setOverviewOpen(true);
+                  setNewProjectOpen(true);
+                }}
                 className="mt-2 flex w-full items-center justify-center rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
               >
                 + Neues Projekt
@@ -919,7 +930,7 @@ export default function HomePage() {
                 className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50"
                 aria-label="Klicktiefe wählen"
               >
-                {depth}
+                {depth === 5 ? "∞" : depth}
               </button>
               {depthOpen && (
                 <div className="absolute bottom-12 left-1/2 z-10 w-16 -translate-x-1/2 rounded-2xl border border-slate-200 bg-white py-1 shadow-lg">
@@ -934,7 +945,7 @@ export default function HomePage() {
                         option === depth ? "text-slate-900" : "text-slate-600"
                       }`}
                     >
-                      {option}
+                      {option === 5 ? "∞" : option}
                     </button>
                   ))}
                 </div>
@@ -1015,6 +1026,22 @@ export default function HomePage() {
             <p className="text-xs text-slate-500">
               Domain: {activeDomain || domains[0]?.hostname || "—"}
             </p>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Neues Projekt</p>
+              <p className="text-xs text-slate-500">Lege ein weiteres Projekt mit Domain an.</p>
+            </div>
+            <button
+              onClick={() => {
+                setOverviewOpen(true);
+                setNewProjectOpen(true);
+              }}
+              className="rounded-full bg-slate-900 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+            >
+              + Neu
+            </button>
           </div>
 
           <div className="flex items-center justify-between">
@@ -1173,6 +1200,74 @@ export default function HomePage() {
           )}
         </div>
       </div>
+
+      {newProjectOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl ring-1 ring-slate-200">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-400">
+                  Neues Projekt
+                </p>
+                <p className="text-base font-semibold text-slate-900">Anlegen</p>
+              </div>
+              <button
+                onClick={() => {
+                  setNewProjectOpen(false);
+                  setNewProjectName("");
+                  setNewProjectDomain("");
+                }}
+                className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+              >
+                Schließen
+              </button>
+            </div>
+            <div className="mt-4 flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                  Projektname
+                </label>
+                <input
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  placeholder="z. B. Kunde A"
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                  Domain
+                </label>
+                <input
+                  value={newProjectDomain}
+                  onChange={(e) => setNewProjectDomain(e.target.value)}
+                  placeholder="example.com"
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                />
+              </div>
+            </div>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                onClick={() => {
+                  setNewProjectOpen(false);
+                  setNewProjectName("");
+                  setNewProjectDomain("");
+                }}
+                className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200"
+              >
+                Abbrechen
+              </button>
+              <button
+                onClick={() => handleCreateProject(newProjectName, newProjectDomain)}
+                disabled={loadingProjects}
+                className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
+              >
+                {loadingProjects ? "Anlegen..." : "Projekt anlegen"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
