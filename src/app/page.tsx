@@ -152,6 +152,24 @@ const stripWww = (host: string) => host.replace(/^www\./i, "");
 const CARD_WIDTH = 220;
 const CARD_MIN_HEIGHT = 120;
 
+const InfinityIcon = ({ className }: { className?: string }) => (
+  <svg
+    className={className}
+    viewBox="0 0 24 12"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    aria-hidden="true"
+  >
+    <path
+      d="M3 6C3 3.79086 4.79086 2 7 2C9.20914 2 11 3.79086 12 6C13 8.20914 14.7909 10 17 10C19.2091 10 21 8.20914 21 6C21 3.79086 19.2091 2 17 2C14.7909 2 13 3.79086 12 6C11 8.20914 9.20914 10 7 10C4.79086 10 3 8.20914 3 6Z"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 const normalizePathValue = (value?: string | null) => {
   const trimmed = (value || "").trim();
   if (!trimmed) return "/";
@@ -1090,9 +1108,11 @@ export default function HomePage() {
                 className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50"
                 aria-label="Klicktiefe wählen"
               >
-                <span className={depth === 5 ? "text-lg leading-none" : ""}>
-                  {depth === 5 ? "∞" : depth}
-                </span>
+                {depth === 5 ? (
+                  <InfinityIcon className="h-6 w-6 text-slate-800" />
+                ) : (
+                  <span>{depth}</span>
+                )}
               </button>
               {depthOpen && (
                 <div className="absolute bottom-12 left-1/2 z-10 w-16 -translate-x-1/2 rounded-2xl border border-slate-200 bg-white py-1 shadow-lg">
@@ -1107,9 +1127,11 @@ export default function HomePage() {
                         option === depth ? "text-slate-900" : "text-slate-600"
                       }`}
                     >
-                      <span className={option === 5 ? "text-lg leading-none" : ""}>
-                        {option === 5 ? "∞" : option}
-                      </span>
+                      {option === 5 ? (
+                        <InfinityIcon className="h-6 w-6 text-slate-800" />
+                      ) : (
+                        <span>{option}</span>
+                      )}
                     </button>
                   ))}
                 </div>
