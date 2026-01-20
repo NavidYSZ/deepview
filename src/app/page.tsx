@@ -548,9 +548,6 @@ export default function HomePage() {
         return Math.max(CARD_MIN_HEIGHT, base + labelLines * 18 + pathLines * 14);
       };
 
-      const ghostEdges = buildGhostEdges(inputNodes);
-      const combinedEdges = [...inputEdges, ...ghostEdges];
-
       const maxHeight =
         inputNodes.length > 0
           ? Math.max(CARD_MIN_HEIGHT, ...inputNodes.map((n) => estimateHeight(n)))
@@ -569,7 +566,7 @@ export default function HomePage() {
       inputNodes.forEach((node) => {
         g.setNode(node.id, { width: CARD_WIDTH, height: maxHeight });
       });
-      combinedEdges.forEach((edge) => {
+      inputEdges.forEach((edge) => {
         g.setEdge(edge.source, edge.target);
       });
 
@@ -599,7 +596,7 @@ export default function HomePage() {
         };
       });
 
-      const layoutedEdges = combinedEdges.map((edge) => ({
+      const layoutedEdges = inputEdges.map((edge) => ({
         ...edge,
         type: "smoothstep",
       }));
