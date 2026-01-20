@@ -193,7 +193,7 @@ const InfinityIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
-const GhostNode = ({ data }: NodeProps<FlowNode["data"]>) => {
+const GhostNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
   const cardHeight = Math.max(data?.cardHeight || 0, CARD_MIN_HEIGHT);
   return (
     <div className="relative group">
@@ -212,6 +212,18 @@ const GhostNode = ({ data }: NodeProps<FlowNode["data"]>) => {
             {data.path}
           </div>
         )}
+        <Handle
+          type="target"
+          position={Position.Top}
+          className="!h-2 !w-2 !bg-transparent"
+          isConnectable={isConnectable}
+        />
+        <Handle
+          type="source"
+          position={Position.Bottom}
+          className="!h-2 !w-2 !bg-transparent"
+          isConnectable={isConnectable}
+        />
       </div>
       <button
         onClick={(e) => {
