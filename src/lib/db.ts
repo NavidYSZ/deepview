@@ -91,6 +91,19 @@ export type NodeSuggestion = {
   createdAt: string;
 };
 
+export type GhostPage = {
+  id: number;
+  projectId: number;
+  domainId: number | null;
+  path: string;
+  label: string;
+  x: number;
+  y: number;
+  meta: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
 const dbFile = path.join(process.cwd(), "data.sqlite");
 
 if (!fs.existsSync(dbFile)) {
@@ -238,6 +251,20 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_node_suggestions_project ON node_suggestions(projectId);
   CREATE INDEX IF NOT EXISTS idx_node_suggestions_path ON node_suggestions(projectId, path);
+  CREATE TABLE IF NOT EXISTS ghost_pages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    projectId INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    domainId INTEGER REFERENCES domains(id),
+    path TEXT NOT NULL,
+    label TEXT NOT NULL,
+    x REAL NOT NULL DEFAULT 0,
+    y REAL NOT NULL DEFAULT 0,
+    meta TEXT NOT NULL DEFAULT '{}',
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ghost_pages_project ON ghost_pages(projectId);
+  CREATE INDEX IF NOT EXISTS idx_ghost_pages_path ON ghost_pages(projectId, path);
 `);
 
 type LegacyProjectRow = {
@@ -895,4 +922,96 @@ export function listNodeSuggestions(
 
 export function deleteNodeSuggestion(projectId: number, id: number) {
   db.prepare("DELETE FROM node_suggestions WHERE projectId = ? AND id = ?").run(projectId, id);
+}
+
+export function createGhostPage(
+  projectId: number,
+  domainId: number | null,
+  path: string,
+  label: string,
+  position: { x?: number; y?: number } = {},
+  meta: Record<string, unknown> = {}
+): GhostPage {
+  const normalizedPath = normalizePathValue(path);
+  const createdAt = now();
+  const updatedAt = createdAt;
+  const stmt = db.prepare(
+    "INSERT INTO ghost_pages (projectId, domainId, path, label, x, y, meta, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  );
+  const info = stmt.run(
+    projectId,
+    domainId,
+    normalizedPath,
+    label || "Ghost Page",
+    position.x ?? 0,
+    position.y ?? 0,
+    JSON.stringify(meta),
+    createdAt,
+    updatedAt
+  );
+  const id = Number(info.lastInsertRowid);
+  return {
+    id,
+    projectId,
+    domainId,
+    path: normalizedPath,
+    label: label || "Ghost Page",
+    x: position.x ?? 0,
+    y: position.y ?? 0,
+    meta,
+    createdAt,
+    updatedAt,
+  };
+}
+
+export function listGhostPages(projectId: number, domainId?: number | null): GhostPage[] {
+  const clauses = ["projectId = ?"];
+  const params: Array<number> = [projectId];
+  if (typeof domainId === "number") {
+    clauses.push("domainId = ?");
+    params.push(domainId);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const rows = db
+    .prepare(`SELECT * FROM ghost_pages ${where} ORDER BY createdAt ASC`)
+    .all(...params) as Array<
+    GhostPage & {
+      meta: string;
+    }
+  >;
+  return rows.map((row) => ({
+    ...row,
+    meta: safeParse(row.meta) || {},
+  }));
+}
+
+export function updateGhostPagePosition(
+  projectId: number,
+  id: number,
+  position: { x: number; y: number }
+): GhostPage | null {
+  const updatedAt = now();
+  db.prepare("UPDATE ghost_pages SET x = ?, y = ?, updatedAt = ? WHERE projectId = ? AND id = ?").run(
+    position.x,
+    position.y,
+    updatedAt,
+    projectId,
+    id
+  );
+  const row = db
+    .prepare("SELECT * FROM ghost_pages WHERE projectId = ? AND id = ? LIMIT 1")
+    .get(projectId, id) as
+    | (GhostPage & {
+        meta: string;
+      })
+    | undefined;
+  if (!row) return null;
+  return {
+    ...row,
+    meta: safeParse(row.meta) || {},
+  };
+}
+
+export function deleteGhostPage(projectId: number, id: number) {
+  db.prepare("DELETE FROM ghost_pages WHERE projectId = ? AND id = ?").run(projectId, id);
 }

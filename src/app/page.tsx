@@ -17,6 +17,7 @@ type FlowNode = Node<{
   label: string;
   path?: string;
   isRoot?: boolean;
+  isGhost?: boolean;
   depth?: number;
   hasChildren?: boolean;
   expanded?: boolean;
@@ -148,6 +149,24 @@ type SuggestionCreateResponse = {
   error?: string;
 };
 
+type GhostPage = {
+  id: number;
+  projectId: number;
+  domainId: number | null;
+  path: string;
+  label: string;
+  x: number;
+  y: number;
+  meta: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type GhostsResponse = {
+  ghosts: GhostPage[];
+  error?: string;
+};
+
 const stripWww = (host: string) => host.replace(/^www\./i, "");
 
 const CARD_WIDTH = 220;
@@ -170,6 +189,30 @@ const InfinityIcon = ({ className }: { className?: string }) => (
     />
   </svg>
 );
+
+const GhostNode = ({ data }: NodeProps<FlowNode["data"]>) => {
+  const cardHeight = Math.max(data?.cardHeight || 0, CARD_MIN_HEIGHT);
+  return (
+    <div className="relative">
+      <div
+        className="flex w-full flex-col rounded-2xl border-2 border-dashed border-slate-500/50 bg-white/80 px-4 py-3 text-slate-700 shadow-[0_8px_24px_rgba(0,0,0,0.05)]"
+        style={{ minHeight: cardHeight, width: CARD_WIDTH }}
+      >
+        <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-slate-400">
+          Ghost Page
+        </div>
+        <div className="mt-1 text-base font-semibold leading-tight text-slate-800">
+          {data?.label || "Ghost Page"}
+        </div>
+        {data?.path && (
+          <div className="mt-1 max-w-full break-all text-[10px] uppercase leading-tight tracking-[0.18em] text-slate-400">
+            {data.path}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const normalizePathValue = (value?: string | null) => {
   const trimmed = (value || "").trim();
@@ -297,13 +340,16 @@ export default function HomePage() {
   const [suggestionInput, setSuggestionInput] = useState("");
   const [keywordSort, setKeywordSort] = useState<"position" | "volume">("position");
   const [autoCrawlPendingDomain, setAutoCrawlPendingDomain] = useState<string | null>(null);
+  const [ghostNodes, setGhostNodes] = useState<FlowNode[]>([]);
+  const [newGhostLabel, setNewGhostLabel] = useState("");
+  const [newGhostPath, setNewGhostPath] = useState("");
   const expandedRef = useRef<Set<string>>(new Set());
   const showAllRef = useRef(false);
   const [showAll, setShowAll] = useState(false);
   const prevVisibleRef = useRef<Set<string>>(new Set());
   const keywordFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const nodeTypes = useMemo(() => ({ card: CardNode }), []);
+  const nodeTypes = useMemo(() => ({ card: CardNode, ghost: GhostNode }), []);
   const hasGraph = nodes.length > 0;
   const depthOptions = useMemo(() => [1, 2, 3, 4, 5], []);
   const defaultEdgeOptions = useMemo(
@@ -377,9 +423,12 @@ export default function HomePage() {
         return Math.max(CARD_MIN_HEIGHT, base + labelLines * 18 + pathLines * 14);
       };
 
+      const dagreNodes = inputNodes.filter((n) => !n.data?.isGhost);
+      const ghostNodesList = inputNodes.filter((n) => n.data?.isGhost);
+
       const maxHeight =
-        inputNodes.length > 0
-          ? Math.max(CARD_MIN_HEIGHT, ...inputNodes.map((n) => estimateHeight(n)))
+        dagreNodes.length > 0
+          ? Math.max(CARD_MIN_HEIGHT, ...dagreNodes.map((n) => estimateHeight(n)))
           : CARD_MIN_HEIGHT;
 
       const g = new dagre.graphlib.Graph();
@@ -392,10 +441,11 @@ export default function HomePage() {
         marginy: 40,
       });
 
-      inputNodes.forEach((node) => {
+      dagreNodes.forEach((node) => {
         g.setNode(node.id, { width: CARD_WIDTH, height: maxHeight });
       });
       inputEdges.forEach((edge) => {
+        if (edge.source.startsWith("ghost-") || edge.target.startsWith("ghost-")) return;
         g.setEdge(edge.source, edge.target);
       });
 
@@ -408,7 +458,7 @@ export default function HomePage() {
         return segs.length;
       };
 
-      const layoutedNodes = inputNodes.map((node) => {
+      const layoutedNodes = dagreNodes.map((node) => {
         const pos = g.node(node.id);
         return {
           ...node,
@@ -421,6 +471,16 @@ export default function HomePage() {
         };
       });
 
+      const ghostWithSizing = ghostNodesList.map((node) => ({
+        ...node,
+        position: {
+          x: node.position?.x ?? 0,
+          y: node.position?.y ?? 0,
+        },
+        data: { ...node.data, depth: getDepth(node), cardHeight: maxHeight, cardWidth: CARD_WIDTH, isGhost: true },
+        className: [node.className, "flow-card"].filter(Boolean).join(" "),
+      }));
+
       const layoutedEdges = inputEdges.map((edge) => ({
         ...edge,
         type: "smoothstep",
@@ -432,7 +492,7 @@ export default function HomePage() {
         return acc;
       }, {});
 
-      const layouted = layoutedNodes.map((n) => ({ ...n }));
+      const layouted = [...layoutedNodes, ...ghostWithSizing].map((n) => ({ ...n }));
       const edgesWithStyle = layoutedEdges.map((e) => ({ ...e }));
 
       const wrappedTargets = new Set<string>();
@@ -458,7 +518,7 @@ export default function HomePage() {
           const startX = centerX - ((rowCount - 1) * xGap) / 2;
 
           const targetIndex = layouted.findIndex((n) => n.id === childId);
-          if (targetIndex >= 0) {
+          if (targetIndex >= 0 && !layouted[targetIndex].data?.isGhost) {
             layouted[targetIndex] = {
               ...layouted[targetIndex],
               position: {
@@ -507,6 +567,7 @@ export default function HomePage() {
         if (viewAll) return true;
         const node = srcNodes.find((n) => n.id === nodeId);
         if (!node) return false;
+        if (node.data?.isGhost) return true;
         const depth = depthFromNode(node);
         if (depth <= 1) return true;
 
@@ -590,6 +651,37 @@ export default function HomePage() {
     [showStatus]
   );
 
+  const loadGhosts = useCallback(
+    async (slug: string) => {
+      try {
+        const res = await fetch(`/api/projects/${slug}/ghosts`, { cache: "no-store" });
+        const data: GhostsResponse = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error || "Konnte Ghost Pages nicht laden.");
+        }
+        const nodes = (data.ghosts || []).map<FlowNode>((g) => ({
+          id: `ghost-${g.id}`,
+          data: {
+            label: g.label,
+            path: g.path,
+            isGhost: true,
+          },
+          position: { x: g.x ?? 0, y: g.y ?? 0 },
+          type: "ghost",
+        }));
+        setGhostNodes(nodes);
+        return nodes;
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Konnte Ghost Pages nicht laden.";
+        showStatus(message);
+        setGhostNodes([]);
+        return [];
+      }
+    },
+    [showStatus]
+  );
+
   const loadSuggestions = useCallback(
     async (slug: string) => {
       try {
@@ -621,6 +713,7 @@ export default function HomePage() {
       try {
         setKeywordsByPath({});
         setSuggestionsByPath({});
+        setGhostNodes([]);
         const res = await fetch(`/api/projects/${slug}`, { cache: "no-store" });
         const data: ProjectDetailResponse = await res.json();
         if (!res.ok) {
@@ -641,22 +734,27 @@ export default function HomePage() {
         setShowAll(false);
         setSelectedNode(null);
 
+        const latestNodes = data.latestSnapshot?.nodes || [];
+        const latestEdges = data.latestSnapshot?.edges || [];
+        const ghostResp = await loadGhosts(data.project.slug);
+        const combinedNodes = [...latestNodes, ...ghostResp];
         if (data.latestSnapshot) {
-          const { nodes: latestNodes, edges: latestEdges, domain, snapshot } = data.latestSnapshot;
-          setFullNodes(latestNodes || []);
+          setFullNodes(combinedNodes);
           setFullEdges(latestEdges || []);
-          setActiveSnapshot(snapshot);
-          setActiveDomain(domain || primaryDomain?.hostname || null);
-          rebuildGraph(latestNodes || [], latestEdges || [], new Set(), false);
+          setActiveSnapshot(data.latestSnapshot.snapshot);
+          setActiveDomain(data.latestSnapshot.domain || primaryDomain?.hostname || null);
+          rebuildGraph(combinedNodes, latestEdges || [], new Set(), false);
           showStatus("Letzte Karte geladen.");
         } else {
-          setFullNodes([]);
+          setFullNodes(combinedNodes);
           setFullEdges([]);
-          setNodes([]);
+          setNodes(combinedNodes);
           setEdges([]);
           setActiveSnapshot(null);
           setSelectedNode(null);
-          showStatus("Noch keine Karte gespeichert.");
+          if (combinedNodes.length === 0) {
+            showStatus("Noch keine Karte gespeichert.");
+          }
         }
 
         await loadKeywords(data.project.slug);
@@ -668,7 +766,7 @@ export default function HomePage() {
         setLoadingProject(false);
       }
     },
-    [loadKeywords, loadSuggestions, rebuildGraph, showStatus]
+    [loadGhosts, loadKeywords, loadSuggestions, rebuildGraph, showStatus]
   );
 
   const loadProjects = useCallback(
@@ -809,14 +907,15 @@ export default function HomePage() {
         throw new Error(data?.error || "Fehler beim Crawlen.");
       }
 
-      setFullNodes(data.nodes || []);
+      const combined = [...(data.nodes || []), ...ghostNodes];
+      setFullNodes(combined);
       setFullEdges(data.edges || []);
       const collapsed = new Set<string>();
       expandedRef.current = collapsed;
       prevVisibleRef.current = new Set();
       showAllRef.current = false;
       setShowAll(false);
-      rebuildGraph(data.nodes || [], data.edges || [], collapsed, false);
+      rebuildGraph(combined, data.edges || [], collapsed, false);
       setActiveSnapshot(data.snapshot);
       setActiveDomain(data.domain.hostname);
       setDomainInput(data.domain.hostname);
@@ -940,6 +1039,62 @@ export default function HomePage() {
       showStatus(message);
     }
   };
+
+  const handleAddGhost = async () => {
+    if (!activeProject) {
+      showStatus("Bitte zuerst ein Projekt auswählen.");
+      return;
+    }
+    const label = newGhostLabel.trim() || "Ghost Page";
+    const path = newGhostPath.trim() || "/";
+    try {
+      const res = await fetch(`/api/projects/${activeProject.slug}/ghosts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label, path, x: 0, y: 0, domain: activeDomain }),
+      });
+      const data: { ghost: GhostPage; error?: string } = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || "Konnte Ghost Page nicht anlegen.");
+      }
+      const node: FlowNode = {
+        id: `ghost-${data.ghost.id}`,
+        data: { label: data.ghost.label, path: data.ghost.path, isGhost: true },
+        position: { x: data.ghost.x ?? 0, y: data.ghost.y ?? 0 },
+        type: "ghost",
+      };
+      setGhostNodes((prev) => [...prev, node]);
+      const combined = [...fullNodes.filter((n) => !n.data?.isGhost), ...[...ghostNodes, node]];
+      setFullNodes(combined);
+      rebuildGraph(combined, fullEdges, expandedRef.current, showAllRef.current);
+      setNewGhostLabel("");
+      setNewGhostPath("");
+      showStatus("Ghost Page hinzugefügt.");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Konnte Ghost Page nicht anlegen.";
+      showStatus(message);
+    }
+  };
+
+  const handleUpdateGhostPosition = useCallback(
+    async (node: FlowNode) => {
+      if (!activeProject) return;
+      const idMatch = node.id.match(/^ghost-(\d+)/);
+      const ghostId = idMatch ? Number(idMatch[1]) : null;
+      if (!ghostId) return;
+      try {
+        await fetch(`/api/projects/${activeProject.slug}/ghosts`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: ghostId, x: node.position.x, y: node.position.y }),
+        });
+      } catch {
+        // silent fail
+      }
+    },
+    [activeProject]
+  );
 
   const toggleShowAll = () => {
     const next = !showAll;
@@ -1097,6 +1252,17 @@ export default function HomePage() {
           className="rounded-2xl"
           onNodeClick={(_, node) => setSelectedNode(node as FlowNode)}
           onPaneClick={() => setSelectedNode(null)}
+          onNodeDragStop={(_, node) => {
+            if (node.type === "ghost") {
+              setGhostNodes((prev) =>
+                prev.map((n) => (n.id === node.id ? { ...n, position: node.position } : n))
+              );
+              setFullNodes((prev) =>
+                prev.map((n) => (n.id === node.id ? { ...n, position: node.position } : n))
+              );
+              handleUpdateGhostPosition(node as FlowNode);
+            }
+          }}
         >
           <Background gap={26} color="#e7ecfb" />
         </ReactFlow>
@@ -1190,14 +1356,14 @@ export default function HomePage() {
       </div>
 
       <div className="absolute left-6 bottom-6 flex items-center">
-        <button
-          onClick={() => setOverviewOpen((v) => !v)}
-          className="flex h-12 w-12 items-center justify-center rounded-full bg-[#8f6cff] text-xl text-white shadow-lg shadow-[#8f6cff]/30 transition hover:brightness-105"
-          aria-label="Projektübersicht"
-        >
-          🗂
-        </button>
-      </div>
+          <button
+            onClick={() => setOverviewOpen((v) => !v)}
+            className="flex h-12 w-12 items-center justify-center rounded-full bg-[#8f6cff] text-xl text-white shadow-lg shadow-[#8f6cff]/30 transition hover:brightness-105"
+            aria-label="Projektübersicht"
+          >
+            🗂
+          </button>
+        </div>
 
       <div className="absolute right-6 bottom-6 flex items-center gap-2 rounded-full bg-white px-3 py-2 text-xs font-semibold text-slate-500 shadow-md ring-1 ring-slate-200">
         {toolbarPlaceholders.map((item) => (
@@ -1294,44 +1460,73 @@ export default function HomePage() {
         </div>
 
           <div className="flex flex-col gap-3">
-            {keywordSummaries.length ? (
-              keywordSummaries.map((item) => (
-                <div
-                  key={item.path}
-                  className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200/80"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <p className="max-w-[240px] break-all text-sm font-semibold text-slate-800">
-                      {item.path}
-                    </p>
-                    <span className="shrink-0 rounded-full bg-white px-2 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200">
-                      {item.count} KW
-                    </span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {item.sample.map((kw) => (
-                      <span
-                        key={`${kw.id}-${kw.term}`}
-                        className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200"
-                      >
-                        {kw.term}
-                      </span>
-                    ))}
-                    {item.count > item.sample.length && (
-                      <span className="text-xs text-slate-500">
-                        + {item.count - item.sample.length} weitere
-                      </span>
-                    )}
-                  </div>
+          {keywordSummaries.length ? (
+            keywordSummaries.map((item) => (
+              <div
+                key={item.path}
+                className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200/80"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <p className="max-w-[240px] break-all text-sm font-semibold text-slate-800">
+                    {item.path}
+                  </p>
+                  <span className="shrink-0 rounded-full bg-white px-2 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200">
+                    {item.count} KW
+                  </span>
                 </div>
-              ))
-            ) : (
-              <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500 ring-1 ring-slate-200/80">
-                Noch keine Keywords hochgeladen.
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {item.sample.map((kw) => (
+                    <span
+                      key={`${kw.id}-${kw.term}`}
+                      className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200"
+                    >
+                      {kw.term}
+                    </span>
+                  ))}
+                  {item.count > item.sample.length && (
+                    <span className="text-xs text-slate-500">
+                      + {item.count - item.sample.length} weitere
+                    </span>
+                  )}
+                </div>
               </div>
-            )}
+            ))
+          ) : (
+            <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500 ring-1 ring-slate-200/80">
+              Noch keine Keywords hochgeladen.
+            </div>
+          )}
+          <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200/80">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-800">Ghost Pages</p>
+                <p className="text-xs text-slate-500">Füge manuell Seiten hinzu (gestrichelt auf der Karte).</p>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-col gap-2">
+              <input
+                value={newGhostLabel}
+                onChange={(e) => setNewGhostLabel(e.target.value)}
+                placeholder="Label (z. B. Landing Ghost)"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+              />
+              <input
+                value={newGhostPath}
+                onChange={(e) => setNewGhostPath(e.target.value)}
+                placeholder="/ghost-page"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+              />
+              <button
+                onClick={handleAddGhost}
+                disabled={!activeProject}
+                className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
+              >
+                Ghost Page hinzufügen
+              </button>
+            </div>
           </div>
         </div>
+      </div>
       </div>
 
       <div

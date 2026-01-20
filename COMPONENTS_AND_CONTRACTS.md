@@ -28,10 +28,11 @@ Goal: Snapshot of the moving parts (UI, crawler, DB, APIs, contracts) for projec
 
 ## Persistence Layer (src/lib/db.ts)
 - DB: `data.sqlite` (WAL).
-- Tables: `projects`, `domains`, `project_features`, `snapshots`, `snapshot_blobs`, `pages`, `keyword_imports`, `keywords`, `metrics`, `events`.
+- Tables: `projects`, `domains`, `project_features`, `snapshots`, `snapshot_blobs`, `pages`, `keyword_imports`, `keywords`, `node_suggestions`, `ghost_pages`, `metrics`, `events`.
   - Snapshots store meta + payload JSON; pages table is normalized (path/depth/title/status).
   - Keywords: per project/domain/path with volume/difficulty/position + meta, linked to imports.
   - Node suggestions: `node_suggestions` per project/path/field with value and timestamps.
+  - Ghost pages: `ghost_pages` per project/domain/path with label, positions (x,y) and meta.
   - Legacy migration: old `projects` table is renamed `projects_legacy`; latest row imported as project+snapshot.
 - Helpers:
   - `createProject(name, domain, slug?, settings?)`
@@ -50,6 +51,10 @@ Goal: Snapshot of the moving parts (UI, crawler, DB, APIs, contracts) for projec
   - `addNodeSuggestion(projectId, domainId, path, field, value)`
   - `listNodeSuggestions(projectId, { path?, domainId? })`
   - `deleteNodeSuggestion(projectId, id)`
+  - `createGhostPage(projectId, domainId, path, label, position, meta)`
+  - `listGhostPages(projectId, domainId?)`
+  - `updateGhostPagePosition(projectId, id, { x, y })`
+  - `deleteGhostPage(projectId, id)`
 
 ## API Routes
 - **GET /api/projects** — Projektliste mit Primärdomain + letztem Snapshot-Stempel.
@@ -62,6 +67,10 @@ Goal: Snapshot of the moving parts (UI, crawler, DB, APIs, contracts) for projec
 - **GET /api/projects/{slug}/suggestions** — Optional `path`, `domain`; liefert Vorschläge zu Meta/H1.
 - **POST /api/projects/{slug}/suggestions** — Body `{ path, field: "metaTitle"|"metaDescription"|"h1", value, domain? }`.
 - **DELETE /api/projects/{slug}/suggestions** — Body `{ id }` zum Entfernen eines Vorschlags.
+- **GET /api/projects/{slug}/ghosts** — liefert Ghost Pages des Projekts.
+- **POST /api/projects/{slug}/ghosts** — Body `{ label, path, x?, y?, domain? }` erstellt Ghost Page.
+- **PATCH /api/projects/{slug}/ghosts** — Body `{ id, x, y }` aktualisiert Position.
+- **DELETE /api/projects/{slug}/ghosts** — Body `{ id }` löscht Ghost Page.
 - **Compat:** `POST /api/crawl` auto-creates/finds project by domain and stores snapshot; `GET /api/projects/latest` returns first available crawler snapshot if any.
 
 ## Data Contracts
