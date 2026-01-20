@@ -1299,8 +1299,6 @@ export default function HomePage() {
   const handleAddGhostRelative = useCallback(
     (node: FlowNode, direction: "down" | "right") => {
       const basePath = normalizePathValue(node.data?.path || "/");
-      const basePos =
-        nodes.find((n) => n.id === node.id)?.position || node.position || { x: 0, y: 0 };
       const timestamp = Date.now();
       const childPath =
         direction === "down"
@@ -1308,22 +1306,17 @@ export default function HomePage() {
           : normalizePathValue(
             `${parentPathOf(basePath) === "/" ? "" : parentPathOf(basePath)}/ghost-${timestamp}`
           );
-      const offsetX = CARD_WIDTH + 140;
-      const targetPos =
-        direction === "right"
-          ? { x: basePos.x + offsetX, y: basePos.y }
-          : { x: 0, y: 0 };
       createGhostAndAdd({
         label: "Ghost Page",
         path: childPath,
-        x: targetPos.x,
-        y: targetPos.y,
-        manualPosition: direction === "right",
+        x: 0,
+        y: 0,
+        manualPosition: false,
         domain: activeDomain || undefined,
         orderAfter: direction === "right" ? node.id : undefined,
       });
     },
-    [activeDomain, createGhostAndAdd, nodes]
+    [activeDomain, createGhostAndAdd]
   );
 
   useEffect(() => {
