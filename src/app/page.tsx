@@ -296,6 +296,7 @@ export default function HomePage() {
   const [editingField, setEditingField] = useState<"metaTitle" | "metaDescription" | "h1" | null>(null);
   const [suggestionInput, setSuggestionInput] = useState("");
   const [keywordSort, setKeywordSort] = useState<"position" | "volume">("position");
+  const [autoCrawlPendingDomain, setAutoCrawlPendingDomain] = useState<string | null>(null);
   const expandedRef = useRef<Set<string>>(new Set());
   const showAllRef = useRef(false);
   const [showAll, setShowAll] = useState(false);
@@ -712,7 +713,7 @@ export default function HomePage() {
     loadProjects(true);
   }, [loadProjects]);
 
-  const handleCreateProject = async (name: string, domain: string) => {
+  const handleCreateProject = async (name: string, domain: string, autoCrawl = true) => {
     const trimmedName = name.trim();
     const trimmedDomain = domain.trim();
     if (!trimmedName) {
@@ -743,6 +744,11 @@ export default function HomePage() {
       await loadProject(data.project.slug);
       setDomainInput(data.domain.hostname);
       setOverviewOpen(true);
+      const targetDomain = autoCrawlPendingDomain || trimmedDomain;
+      setAutoCrawlPendingDomain(null);
+      if (autoCrawl) {
+        await handleCrawl(targetDomain);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Konnte Projekt nicht anlegen.";
       showStatus(message);
@@ -751,8 +757,9 @@ export default function HomePage() {
     }
   };
 
-  const handleCrawl = async () => {
+  const handleCrawl = async (domainOverride?: string) => {
     const domainToUse =
+      domainOverride?.trim() ||
       domainInput.trim() ||
       domains.find((d) => d.isPrimary)?.hostname ||
       domains[0]?.hostname ||
@@ -780,6 +787,7 @@ export default function HomePage() {
     if (!activeProject || !hasProjectForHost) {
       setNewProjectDomain(domainToUse);
       setNewProjectName(host);
+      setAutoCrawlPendingDomain(domainToUse);
       setOverviewOpen(true);
       setNewProjectOpen(true);
       showStatus("Projekt anlegen, um die Domain zu crawlen.");
@@ -1018,6 +1026,7 @@ export default function HomePage() {
                   setProjectMenuOpen(false);
                   setOverviewOpen(true);
                   setNewProjectOpen(true);
+                  setAutoCrawlPendingDomain(null);
                 }}
                 className="mt-2 flex w-full items-center justify-center rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
               >
@@ -1112,12 +1121,18 @@ export default function HomePage() {
           <input
             value={domainInput}
             onChange={(e) => setDomainInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleCrawl();
+              }
+            }}
             placeholder="z. B. example.com"
             className="flex-1 border-none text-base focus:outline-none"
           />
           <div className="relative flex items-center gap-2">
             <button
-              onClick={handleCrawl}
+              onClick={() => handleCrawl()}
               disabled={loading || !activeProject}
               className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-70"
             >
@@ -1264,19 +1279,19 @@ export default function HomePage() {
                 className="hidden"
                 onChange={(e) => handleKeywordUpload(e.target.files?.[0] || null)}
               />
-              <button
-                onClick={() => keywordFileInputRef.current?.click()}
-                disabled={!activeProject || uploadingKeywords}
-                className={`rounded-full px-3 py-2 text-sm font-semibold shadow-sm ring-1 ring-slate-200 transition ${
-                  uploadingKeywords
-                    ? "bg-slate-100 text-slate-500"
-                    : "bg-slate-900 text-white hover:bg-slate-800"
-                } disabled:opacity-60`}
-              >
-                {uploadingKeywords ? "Lädt..." : "Upload"}
-              </button>
-            </div>
+            <button
+              onClick={() => keywordFileInputRef.current?.click()}
+              disabled={!activeProject || uploadingKeywords}
+              className={`rounded-full px-3 py-2 text-sm font-semibold shadow-sm ring-1 ring-slate-200 transition ${
+                uploadingKeywords
+                  ? "bg-slate-100 text-slate-500"
+                  : "bg-slate-900 text-white hover:bg-slate-800"
+              } disabled:opacity-60`}
+            >
+              {uploadingKeywords ? "Lädt..." : "Upload"}
+            </button>
           </div>
+        </div>
 
           <div className="flex flex-col gap-3">
             {keywordSummaries.length ? (
@@ -1678,17 +1693,18 @@ export default function HomePage() {
                   setNewProjectOpen(false);
                   setNewProjectName("");
                   setNewProjectDomain("");
+                  setAutoCrawlPendingDomain(null);
                 }}
                 className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200"
               >
                 Abbrechen
               </button>
               <button
-                onClick={() => handleCreateProject(newProjectName, newProjectDomain)}
+                onClick={() => handleCreateProject(newProjectName, newProjectDomain, true)}
                 disabled={loadingProjects}
                 className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
               >
-                {loadingProjects ? "Anlegen..." : "Projekt anlegen"}
+                {loadingProjects ? "Anlegen..." : "Projekt speichern & Crawl starten"}
               </button>
             </div>
           </div>
