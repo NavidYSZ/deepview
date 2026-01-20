@@ -1300,9 +1300,11 @@ export default function HomePage() {
                   key={item.path}
                   className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200/80"
                 >
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-semibold text-slate-800">{item.path}</p>
-                    <span className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="max-w-[240px] break-all text-sm font-semibold text-slate-800">
+                      {item.path}
+                    </p>
+                    <span className="shrink-0 rounded-full bg-white px-2 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200">
                       {item.count} KW
                     </span>
                   </div>
