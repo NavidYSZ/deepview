@@ -19,6 +19,7 @@ type FlowNode = Node<{
   isRoot?: boolean;
   isGhost?: boolean;
   isManualPosition?: boolean;
+  orderAfter?: string;
   depth?: number;
   hasChildren?: boolean;
   expanded?: boolean;
@@ -305,7 +306,31 @@ const buildGhostEdges = (nodes: FlowNode[]) => {
         type: "smoothstep",
         style: { stroke: "rgba(0,0,0,0.4)", strokeWidth: 2, strokeDasharray: "4 4" },
       };
-    });
+  });
+};
+
+const reorderChildrenByOrderAfter = (childIds: string[], nodesById: Map<string, FlowNode>) => {
+  const ids = [...childIds];
+  let safety = 0;
+  while (safety < ids.length * 2) {
+    safety += 1;
+    let moved = false;
+    for (const id of ids) {
+      const node = nodesById.get(id);
+      const orderAfter = node?.data?.orderAfter;
+      if (!orderAfter) continue;
+      const targetIndex = ids.indexOf(orderAfter);
+      const currentIndex = ids.indexOf(id);
+      if (targetIndex >= 0 && currentIndex >= 0 && currentIndex !== targetIndex + 1) {
+        ids.splice(currentIndex, 1);
+        ids.splice(targetIndex + 1, 0, id);
+        moved = true;
+        break;
+      }
+    }
+    if (!moved) break;
+  }
+  return ids;
 };
 
 const toolbarPlaceholders = ["↔", "🔍", "⟳", "◇", "⚡", "≡"];
@@ -572,6 +597,17 @@ export default function HomePage() {
 
       dagre.layout(g);
 
+      const nodesById = new Map(inputNodes.map((n) => [n.id, n]));
+      const reorderedChildren: Record<string, string[]> = {};
+      const baseChildren = inputEdges.reduce<Record<string, string[]>>((acc, edge) => {
+        acc[edge.source] = acc[edge.source] || [];
+        acc[edge.source].push(edge.target);
+        return acc;
+      }, {});
+      Object.entries(baseChildren).forEach(([parent, children]) => {
+        reorderedChildren[parent] = reorderChildrenByOrderAfter(children, nodesById);
+      });
+
       const getDepth = (node: FlowNode) => {
         if (node.data?.isRoot) return 0;
         const path = node.data?.path || "/";
@@ -601,11 +637,13 @@ export default function HomePage() {
         type: "smoothstep",
       }));
 
-      const childrenByParent = layoutedEdges.reduce<Record<string, string[]>>((acc, edge) => {
-        acc[edge.source] = acc[edge.source] || [];
-        acc[edge.source].push(edge.target);
-        return acc;
-      }, {});
+      const childrenByParent = Object.keys(reorderedChildren).length
+        ? reorderedChildren
+        : layoutedEdges.reduce<Record<string, string[]>>((acc, edge) => {
+            acc[edge.source] = acc[edge.source] || [];
+            acc[edge.source].push(edge.target);
+            return acc;
+          }, {});
 
       const layouted = layoutedNodes.map((n) => ({ ...n }));
       const edgesWithStyle = layoutedEdges.map((e) => ({ ...e }));
@@ -671,6 +709,7 @@ export default function HomePage() {
     (srcNodes: FlowNode[], srcEdges: FlowEdge[], expandedSet: Set<string>, viewAll: boolean) => {
       const ghostEdges = buildGhostEdges(srcNodes);
       const combinedEdges = [...srcEdges, ...ghostEdges];
+      const nodesById = new Map(srcNodes.map((n) => [n.id, n]));
 
       const parentMap: Record<string, string | undefined> = {};
       const childrenMapFull: Record<string, string[]> = {};
@@ -679,6 +718,10 @@ export default function HomePage() {
         parentMap[edge.target] = edge.source;
         childrenMapFull[edge.source] = childrenMapFull[edge.source] || [];
         childrenMapFull[edge.source].push(edge.target);
+      });
+
+      Object.entries(childrenMapFull).forEach(([parent, children]) => {
+        childrenMapFull[parent] = reorderChildrenByOrderAfter(children, nodesById);
       });
 
       const isVisible = (nodeId: string) => {
@@ -734,6 +777,7 @@ export default function HomePage() {
             onAddGhostDown: () => handleAddGhostRelativeRef.current?.(node, "down"),
             onAddGhostRight: () => handleAddGhostRelativeRef.current?.(node, "right"),
             onDeleteGhost: () => handleDeleteGhost(node),
+            orderAfter: node.data?.orderAfter,
           },
         }));
 
@@ -1187,6 +1231,7 @@ export default function HomePage() {
       y: number;
       domain?: string | null;
       manualPosition?: boolean;
+      orderAfter?: string;
     }) => {
       if (!activeProject) {
         showStatus("Bitte zuerst ein Projekt auswählen.");
@@ -1225,6 +1270,7 @@ export default function HomePage() {
             path: data.ghost.path,
             isGhost: true,
             isManualPosition: payload.manualPosition || Boolean(data.ghost.meta?.manualPosition),
+            orderAfter: payload.orderAfter,
           },
           position: { x: data.ghost.x ?? 0, y: data.ghost.y ?? 0 },
           type: "ghost",
@@ -1274,6 +1320,7 @@ export default function HomePage() {
         y: targetPos.y,
         manualPosition: direction === "right",
         domain: activeDomain || undefined,
+        orderAfter: direction === "right" ? node.id : undefined,
       });
     },
     [activeDomain, createGhostAndAdd, nodes]
