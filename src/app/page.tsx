@@ -1183,6 +1183,26 @@ export default function HomePage() {
                   <p className="text-xs text-slate-500">{selectedNode.data.path}</p>
                 )}
               </div>
+              {(selectedNode.data?.unreachable ||
+                (selectedNode.data?.statusCode && selectedNode.data.statusCode >= 400)) && (
+                <div className="rounded-2xl border border-red-300 bg-red-50 p-3 ring-1 ring-red-200">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-xs font-bold text-white">
+                      !
+                    </span>
+                    <div className="flex flex-col">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-red-700">
+                        Fehler
+                      </p>
+                      <p className="text-sm font-semibold text-red-700">
+                        {selectedNode.data?.statusCode
+                          ? `Status ${selectedNode.data.statusCode}`
+                          : "Seite nicht erreichbar"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200/80">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
                   Meta Title
