@@ -18,6 +18,7 @@ type FlowNode = Node<{
   path?: string;
   isRoot?: boolean;
   isGhost?: boolean;
+  isManualPosition?: boolean;
   depth?: number;
   hasChildren?: boolean;
   expanded?: boolean;
@@ -583,10 +584,7 @@ export default function HomePage() {
 
       const layoutedNodes = inputNodes.map((node) => {
         const pos = g.node(node.id);
-        const hasManualPos =
-          node.data?.isGhost &&
-          node.position &&
-          (node.position.x !== 0 || node.position.y !== 0);
+        const hasManualPos = node.data?.isGhost && node.data?.isManualPosition;
         const finalPos = hasManualPos
           ? node.position
           : {
@@ -780,20 +778,21 @@ export default function HomePage() {
     async (slug: string) => {
       try {
         const res = await fetch(`/api/projects/${slug}/ghosts`, { cache: "no-store" });
-        const data: GhostsResponse = await res.json();
-        if (!res.ok) {
-          throw new Error(data?.error || "Konnte Ghost Pages nicht laden.");
-        }
-        const nodes = (data.ghosts || []).map<FlowNode>((g) => ({
-          id: `ghost-${g.id}`,
-          data: {
-            label: g.label,
-            path: g.path,
-            isGhost: true,
-          },
-          position: { x: g.x ?? 0, y: g.y ?? 0 },
-          type: "ghost",
-        }));
+    const data: GhostsResponse = await res.json();
+    if (!res.ok) {
+      throw new Error(data?.error || "Konnte Ghost Pages nicht laden.");
+    }
+    const nodes = (data.ghosts || []).map<FlowNode>((g) => ({
+      id: `ghost-${g.id}`,
+      data: {
+        label: g.label,
+        path: g.path,
+        isGhost: true,
+        isManualPosition: Boolean(g.meta?.manualPosition),
+      },
+      position: { x: g.x ?? 0, y: g.y ?? 0 },
+      type: "ghost",
+    }));
         setGhostNodes(nodes);
         return nodes;
       } catch (error) {
@@ -1243,31 +1242,23 @@ export default function HomePage() {
 
   const handleAddGhostRelative = useCallback(
     (node: FlowNode, direction: "down" | "right") => {
-      const basePos =
-        nodes.find((n) => n.id === node.id)?.position || node.position || { x: 0, y: 0 };
       const basePath = normalizePathValue(node.data?.path || "/");
       const timestamp = Date.now();
       const childPath =
         direction === "down"
           ? normalizePathValue(basePath === "/" ? `/ghost-${timestamp}` : `${basePath}/ghost-${timestamp}`)
           : normalizePathValue(
-              `${parentPathOf(basePath) === "/" ? "" : parentPathOf(basePath)}/ghost-${timestamp}`
-            );
-      const offsetY = (node.data?.cardHeight || CARD_MIN_HEIGHT) + 120;
-      const offsetX = CARD_WIDTH + 140;
-      const targetPos =
-        direction === "down"
-          ? { x: basePos.x, y: basePos.y + offsetY }
-          : { x: basePos.x + offsetX, y: basePos.y };
+            `${parentPathOf(basePath) === "/" ? "" : parentPathOf(basePath)}/ghost-${timestamp}`
+          );
       createGhostAndAdd({
         label: "Ghost Page",
         path: childPath,
-        x: targetPos.x,
-        y: targetPos.y,
+        x: 0,
+        y: 0,
         domain: activeDomain || undefined,
       });
     },
-    [activeDomain, createGhostAndAdd, nodes]
+    [activeDomain, createGhostAndAdd]
   );
 
   useEffect(() => {
@@ -1287,6 +1278,16 @@ export default function HomePage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: ghostId, x: node.position.x, y: node.position.y }),
         });
+        setFullNodes((prev) =>
+          prev.map((n) =>
+            n.id === node.id ? { ...n, data: { ...n.data, isManualPosition: true } } : n
+          )
+        );
+        setGhostNodes((prev) =>
+          prev.map((n) =>
+            n.id === node.id ? { ...n, data: { ...n.data, isManualPosition: true } } : n
+          )
+        );
       } catch {
         // silent fail
       }

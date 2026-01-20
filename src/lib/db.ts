@@ -990,14 +990,15 @@ export function updateGhostPagePosition(
   id: number,
   position: { x: number; y: number }
 ): GhostPage | null {
+  const existing = db
+    .prepare("SELECT meta FROM ghost_pages WHERE projectId = ? AND id = ? LIMIT 1")
+    .get(projectId, id) as { meta?: string } | undefined;
+  const metaParsed = existing?.meta ? safeParse(existing.meta) || {} : {};
+  const updatedMeta = { ...metaParsed, manualPosition: true };
   const updatedAt = now();
-  db.prepare("UPDATE ghost_pages SET x = ?, y = ?, updatedAt = ? WHERE projectId = ? AND id = ?").run(
-    position.x,
-    position.y,
-    updatedAt,
-    projectId,
-    id
-  );
+  db.prepare(
+    "UPDATE ghost_pages SET x = ?, y = ?, meta = ?, updatedAt = ? WHERE projectId = ? AND id = ?"
+  ).run(position.x, position.y, JSON.stringify(updatedMeta), updatedAt, projectId, id);
   const row = db
     .prepare("SELECT * FROM ghost_pages WHERE projectId = ? AND id = ? LIMIT 1")
     .get(projectId, id) as
