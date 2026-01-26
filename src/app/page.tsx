@@ -1150,7 +1150,7 @@ export default function HomePage() {
       const targetDomain = autoCrawlPendingDomain || trimmedDomain;
       setAutoCrawlPendingDomain(null);
       if (autoCrawl) {
-        await handleCrawl(targetDomain);
+        await handleCrawl({ domainOverride: targetDomain, projectOverride: data.project });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Konnte Projekt nicht anlegen.";
@@ -1160,7 +1160,8 @@ export default function HomePage() {
     }
   };
 
-  const handleCrawl = async (domainOverride?: string) => {
+  const handleCrawl = async (options: { domainOverride?: string; projectOverride?: Project | null } = {}) => {
+    const { domainOverride, projectOverride } = options;
     const domainToUse =
       domainOverride?.trim() ||
       domainInput.trim() ||
@@ -1183,11 +1184,14 @@ export default function HomePage() {
     };
 
     const host = deriveHostname(domainToUse);
-    const hasProjectForHost = projects.some(
-      (p) => p.primaryDomain && stripWww(p.primaryDomain) === stripWww(host)
-    );
+    const hasProjectForHost =
+      projectOverride != null
+        ? true
+        : projects.some((p) => p.primaryDomain && stripWww(p.primaryDomain) === stripWww(host));
 
-    if (!activeProject || !hasProjectForHost) {
+    const projectToUse = projectOverride ?? activeProject;
+
+    if (!projectToUse || !hasProjectForHost) {
       setNewProjectDomain(domainToUse);
       setNewProjectName(host);
       setAutoCrawlPendingDomain(domainToUse);
@@ -1201,7 +1205,7 @@ export default function HomePage() {
     setStatusMessage(null);
 
     try {
-      const res = await fetch(`/api/projects/${activeProject.slug}/crawl`, {
+      const res = await fetch(`/api/projects/${projectToUse.slug}/crawl`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ domain: domainToUse, depth }),
@@ -1834,7 +1838,7 @@ export default function HomePage() {
           <div className="relative flex items-center gap-2">
             <button
               onClick={() => handleCrawl()}
-              disabled={loading || !activeProject}
+              disabled={loading}
               className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-70"
             >
               {loading ? "Crawle..." : "Crawl"}
