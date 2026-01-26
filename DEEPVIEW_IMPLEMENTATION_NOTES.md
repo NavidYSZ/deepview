@@ -1,47 +1,40 @@
 # Deepview Implementation Notes
 
-## File Map (key parts)
-- `src/app/page.tsx`: UI with React Flow, card node, crawl/load actions, status pill, floating input bar, expand/collapse logic, “show all” toggle.
-- `src/lib/crawler.ts`: Domain normalization, sitemap + path-based crawl, link filtering, node/edge assembly.
-- `src/lib/db.ts`: `better-sqlite3` setup, table init, `saveProject`, `getLatestProject`.
-- `src/app/api/crawl/route.ts`: `POST /api/crawl` — crawls, saves, returns graph.
-- `src/app/api/projects/latest/route.ts`: `GET /api/projects/latest` — returns last saved graph.
-- `src/app/globals.css`: Font import, theme colors, base styles, fade-in keyframe.
-- `src/app/layout.tsx`: Metadata and font setup.
+## File Map (Key Parts)
+- `src/app/page.tsx`: Haupt-UI (React Flow, Card/Ghost Nodes, Project Switcher, Crawl/Refresh, ShowAll/Expand, Sidebars für Overview/SEO/Keywords/Ghosts).
+- `src/lib/crawler.ts`: Domain-Normalisierung, Sitemap + Pfadtiefen-Crawl (1–5), Host-Filter, Node/Edge-Bau inkl. Status/SEO-Felder.
+- `src/lib/db.ts`: SQLite-Init (WAL), Tabellen (projects/domains/features/snapshots/pages/keywords/suggestions/ghosts), Helpers für CRUD + Legacy-Migration.
+- `src/lib/keywords.ts`: Parser für CSV/TSV/XLSX-Keyword-Uploads (normalisiert URL/Path/Host).
+- API-Routes: `src/app/api/**` (Projects, Crawl, Snapshots, Keywords, Suggestions, Ghosts, Compat latest).
+- Styling/Layout: `src/app/globals.css`, `src/app/layout.tsx`.
 
 ## UI Behavior
-- React Flow: `fitView`, minZoom 0.3, maxZoom 2, custom `card` node, `Background` grid, step edges.
-- Expand/collapse: only depth 0–1 visible by default; ▼ per node with children; “show all” (🖥) toggles everything. State via refs to avoid flackern.
-- Layout: Dagre; parents with >4 visible children (depth ≥2) wrap children into rows of 4; edges to wrapped children become black/transparent. Root/direct children never wrap.
-- Status: top pill; “Save” button just shows status; settings placeholder.
-- Animation: fade-in for newly shown cards; existing nodes keep their positions on expand.
+- React Flow: `fitView`, minZoom 0.3, maxZoom 2, `Background` Grid; NodeTypes `card` und `ghost`; Edges smoothstep.
+- Sichtbarkeit: Tiefe 0–1 standard; ▼ toggelt Kinder; 🖥 zeigt alle (setzt `expandedRef` auf alle IDs). Refs statt State, um Flackern zu vermeiden.
+- Layout: Dagre-Basis, Wrap bei Eltern-Tiefe ≥2 mit >4 sichtbaren Kindern; Wrapped-Kanten gedunkelt; Root + direkte Kinder nie Wrap. Ghost-Nodes behalten manuelle Position, sonst werden sie mitgelayoutet.
+- Status/UX: Pill oben; Save/Settings Dekor; Floating Input Bar unten (Domain + Depth-Picker ∞=5); Toolbar rechts unten als Placeholder. Links Sidebar (Projekt/Uploads/Ghosts), rechts Sidebar (Page Details, SEO-Felder editierbar via Suggestions, Keywords sortierbar).
+- Ghosts: Buttons an Nodes (+ unten/rechts) erzeugen Ghost unter/auf gleicher Ebene (orderAfter). Drag speichert Position (manual flag). Deletion-Knopf am Ghost.
+- Keywords/Suggestions: Keywords per Upload geladen und per Pfad angezeigt; Suggestions CRUD je Feld für ausgewählten Node/Pfad.
 
-## Crawling Logic (src/lib/crawler.ts)
-- Normalize domain to https; strip hash/search; host matching ignores leading `www.`; follow redirect host; root always included.
-- Sitemap ingest: `/sitemap.xml` or `/sitemap_index.xml`, same-host URLs only (MAX_PAGES=80).
-- Crawl by path depth (not click graph): fetch pages up to max depth (1–5) and max pages; same-host only. Titles from `<title>` when present.
-- Hierarchy from paths: parent path is prefix (`/a/b` -> `/a`); edges reflect path tree. Root `/` is not added as a child.
-- Labels: title -> last path segment -> hostname; truncated to 40 chars with ellipsis.
+## Crawling Logic (`src/lib/crawler.ts`)
+- Normalisiert Domain → `https://host/`, strip Query/Hash, Host-Match ohne `www.`, Redirect-Host wird angenommen.
+- Sitemaps (`/sitemap.xml`/`/sitemap_index.xml`) same-host, max 80.
+- Crawl nach Pfadtiefe (1–5), Queue BFS, same-host only, max 80 Seiten. Liest `<title>`, Meta Title/Description (og/twitter/description), erstes `<h1>`.
+- Pfadbaum: Elternpräfixe erzwungen, fehlende Ahnen als unreachable 404. Root-only Fall generiert Dummy “Keine Links gefunden”.
 
-## Data Contracts (Flow)
-- `FlowNode` data: `{ label: string; path?: string; isRoot?: boolean; depth?: number; hasChildren?: boolean; expanded?: boolean; isNew?: boolean }`
-  - type: `"card"`
-  - ids: `"root"` or `"node-{normalizedPath}"`
-- `FlowEdge`: ids `e-{parent}-{child}`, type `step`, stroke blue; edges to wrapped children are black/transparent.
+## Data Contracts (Graph)
+- `FlowNode.data` (card): `{ label, path?, isRoot?, depth?, hasChildren?, expanded?, isNew?, statusCode?, unreachable?, metaTitle?, metaDescription?, h1?, orderAfter?, isManualPosition? }`
+- `FlowNode.data` (ghost): `{ label, path, isGhost: true, isManualPosition?, orderAfter? }`
+- IDs: `root`, `node-{normalizedPath}`, `ghost-{id}`; Edges: `e-{parent}-{child}`, Typ smoothstep, Wrapped-Kanten dunkel.
 
 ## Data Layer (SQLite)
-- `projects` table schema: `id INTEGER PK`, `domain TEXT`, `nodes TEXT`, `edges TEXT`, `createdAt TEXT`.
-- Uses `db.pragma("journal_mode = WAL")`.
-- On import: touches `data.sqlite` if missing, then ensures table exists.
-- `saveProject(domain, nodes, edges)`: stringifies nodes/edges, writes with ISO timestamp.
-- `getLatestProject()`: returns last by `createdAt` or null.
+- Core Tabellen: `projects`, `domains`, `project_features`, `snapshots` + `snapshot_blobs`, `pages` (title/depth/status/unreachable + meta JSON).
+- SEO/Content: `keyword_imports`, `keywords`, `node_suggestions`, `ghost_pages`.
+- Prepared: `metrics`, `events`.
+- Legacy: erkennt altes `projects`-Schema, verschiebt zu `projects_legacy`, importiert letzte Zeile als neues Projekt+Snapshot.
 
 ## Error Handling
-- `POST /api/crawl`: 400 on missing domain; 500 with error message on fetch/parse failure.
-- `GET /api/projects/latest`: always 200 with `{ project: ... | null }`.
-- UI surfaces error/status in the pill; no toast system.
+- APIs geben 400 bei fehlenden Pflichtfeldern, 404 bei fehlenden Projekten, 500 bei generischen Fehlern; UI zeigt Status-Pill.
 
 ## Styling
-- Font: Manrope from Google Fonts, fallback to Geist Sans.
-- Palette: background `#f9fbff`, primary `#2f6bff`, accent root border `#8f6cff`.
-- Cards: rounded, double border, subtle shadow; fade-in animation for newly shown cards.
+- Fonts: Manrope + Geist; Palette bg `#f9fbff`, Primär `#2f6bff`, Root-Rand `#8f6cff`; Card-Fade-In für neue Nodes.

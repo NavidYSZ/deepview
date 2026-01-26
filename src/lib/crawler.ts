@@ -30,9 +30,6 @@ export type CrawlResult = {
   edges: FlowEdge[];
 };
 
-const MAX_DEPTH = 5;
-const MAX_PAGES = 80;
-
 export function normalizeDomain(input: string) {
   const trimmed = input.trim();
   const prefixed = trimmed.startsWith("http") ? trimmed : `https://${trimmed}`;
@@ -106,7 +103,7 @@ async function fetchSitemapUrls(root: URL): Promise<URL[]> {
     }
   }
 
-  return urls.slice(0, MAX_PAGES);
+  return urls;
 }
 
 export async function crawlDomain(
@@ -116,7 +113,6 @@ export async function crawlDomain(
   const normalized = normalizeDomain(domain);
   const rootUrl = new URL(normalized);
   let rootHost = rootUrl.hostname;
-  const depthLimit = Math.min(Math.max(1, Math.floor(maxDepth)), MAX_DEPTH);
 
   const pages = new Map<string, PageInfo>();
 
@@ -139,23 +135,25 @@ export async function crawlDomain(
   // Always include root
   addPage(rootUrl);
 
-  // Try sitemap
-  const sitemapUrls = await fetchSitemapUrls(rootUrl);
-  sitemapUrls.forEach((url) => addPage(url));
-
-  // Crawl by fetching pages up to MAX_PAGES and respecting depthLimit by path
   const queue: URL[] = [rootUrl];
   const processed = new Set<string>();
 
-  while (queue.length && pages.size < MAX_PAGES) {
+  // Try sitemap: add pages and queue them like normal crawl
+  const sitemapUrls = await fetchSitemapUrls(rootUrl);
+  sitemapUrls.forEach((url) => {
+    addPage(url);
+    const path = cleanPath(url);
+    if (!processed.has(path)) {
+      queue.push(url);
+    }
+  });
+
+  // Crawl by fetching pages; no depth or page limit
+  while (queue.length) {
     const current = queue.shift();
     if (!current) break;
 
     const path = cleanPath(current);
-    const depth = pathSegments(path).length;
-    if (depth > depthLimit) {
-      continue;
-    }
     if (processed.has(path)) continue;
     processed.add(path);
 
@@ -215,9 +213,6 @@ export async function crawlDomain(
       for (const link of links) {
         if (!matchesHost(link.hostname, rootHost)) continue;
         const childPath = cleanPath(link);
-        const childDepth = pathSegments(childPath).length;
-        if (childDepth > depthLimit) continue;
-        if (pages.size >= MAX_PAGES) break;
         addPage(link);
         queue.push(link);
       }

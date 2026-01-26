@@ -8,26 +8,29 @@
 - Persist DB: mount/keep `data.sqlite` in project root.
 
 ## APIs to Know
-- `GET /api/projects` — Projektliste.
-- `POST /api/projects` — Body `{ name, domain }` → legt Projekt + Primärdomain an.
-- `GET /api/projects/{slug}` — Projektdetails + letzter Crawler-Snapshot (nodes/edges).
-- `POST /api/projects/{slug}/crawl` — Body `{ domain?, depth? }` → crawlt, speichert Snapshot, liefert `{ nodes, edges }`.
+- `GET/POST /api/projects` — Liste anfordern oder Projekt+Domain anlegen.
+- `GET /api/projects/{slug}` — Projekt + Domains/Features + letzter Snapshot (nodes/edges).
+- `POST /api/projects/{slug}/crawl` — Body `{ domain?, depth? }` (1–5) → crawlt, speichert Snapshot/Pages.
 - `GET /api/projects/{slug}/snapshots?source=crawler` — Snapshot-Metadaten.
-- Compat: `POST /api/crawl` und `GET /api/projects/latest` bleiben als Fallback.
+- Keywords: `GET/POST /api/projects/{slug}/keywords` — Upload CSV/TSV/XLSX oder Query per `path`/`domain`.
+- Suggestions: `GET/POST/DELETE /api/projects/{slug}/suggestions` — metaTitle/metaDescription/h1 pro Pfad.
+- Ghost Pages: `GET/POST/PATCH/DELETE /api/projects/{slug}/ghosts` — manuelle Nodes anlegen/positionieren/löschen.
+- Compat: `POST /api/crawl` (auto-proj) und `GET /api/projects/latest` (erster gefundener Snapshot).
 
 ## Key Files
-- UI: `src/app/page.tsx` (Project Switcher, React Flow canvas, crawl actions, card node).
-- Crawler: `src/lib/crawler.ts` (depth 1–5, same-host links only).
-- DB: `src/lib/db.ts` (project/domain/snapshot schema + helpers, legacy migration).
+- UI: `src/app/page.tsx` (Project Switcher, React Flow, Crawl, ShowAll/Expand, Ghosts, Keywords, SEO Suggestions).
+- Crawler: `src/lib/crawler.ts` (Pfadtiefe 1–5, same-host, Sitemap, Meta/H1).
+- DB: `src/lib/db.ts` (projects/domains/features/snapshots/pages/keywords/suggestions/ghosts + Legacy-Migration).
+- Keyword Parsing: `src/lib/keywords.ts` (CSV/TSV/XLSX → Rows).
 - API routes: `src/app/api/projects/*`, `src/app/api/crawl/route.ts` (compat), `src/app/api/projects/latest/route.ts` (compat).
 - Styles: `src/app/globals.css`.
 
 ## Behavior Snapshot
-- On load: fetch projects list; auto-select first project; status pill indicates result.
-- Crawl: posts project-scoped domain/depth, normalizes to root, builds nodes/edges from URL path hierarchy (with sitemap support), saves snapshot automatically.
-- Visibility: depth 0–1 shown by default; ▼ toggles deeper nodes; 🖥 shows all.
-- Graph: custom `card` nodes, Dagre layout; wrapping of >4 children only for depth ≥2; edges to wrapped children are black/transparent.
-- Placeholders: toolbar/save buttons are non-functional; crawl + load/refresh are functional.
+- On load: Projekte laden → erstes Projekt + Snapshot → Graph + Ghosts + Keywords + Suggestions werden gefetched.
+- Crawl: Project-scoped Domain/Depth posten, normalisiert Host, speichert Snapshot + Pages, aktualisiert Graph.
+- Sichtbarkeit: Tiefe 0–1 default, ▼/🖥 steuern Sichtbarkeit; Dagre + Wrap bei Eltern ≥2 mit >4 Kindern; Ghosts werden mit gerendert.
+- SEO/Content: Keywords Upload + Pfad-Liste; Suggestions CRUD für metaTitle/metaDescription/h1 je Node/Pfad.
+- Placeholders: Toolbar/Save/Settings dekorativ; Status-Pill liefert Feedback.
 
 ## Deployment (Coolify / Nixpacks)
 - Install: `npm install`
