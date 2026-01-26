@@ -35,6 +35,7 @@ type FlowNode = Node<{
   h1?: string;
   cardHeight?: number;
   cardWidth?: number;
+  seoFlag?: "page1" | "threshold";
 }>;
 type FlowEdge = Edge;
 
@@ -605,7 +606,7 @@ export default function HomePage() {
   }, [selectedNode, suggestionsByPath]);
 
   const getSeoFlag = useCallback(
-    (path?: string | null) => {
+    (path?: string | null): "page1" | "threshold" | undefined => {
       const list = keywordsByPath[normalizePathValue(path || "/")] || [];
       const hasPage1 = list.some((k) => {
         const pos = k.position ?? 9999;
@@ -677,14 +678,6 @@ export default function HomePage() {
       setCardTransitionPhase("idle");
     }
   }, [viewMode]);
-
-  useEffect(() => {
-    if (seoMode) {
-      rebuildGraph(fullNodes, fullEdges, expandedRef.current, showAllRef.current);
-    } else {
-      rebuildGraph(fullNodes, fullEdges, expandedRef.current, showAllRef.current);
-    }
-  }, [fullEdges, fullNodes, rebuildGraph, seoMode]);
 
   const animateCardSwap = useCallback(
     (nextParentId: string, pushHistory: boolean) => {
@@ -987,6 +980,10 @@ export default function HomePage() {
     },
     [applyLayout, handleDeleteGhost, getSeoFlag, seoMode]
   );
+
+  useEffect(() => {
+    rebuildGraph(fullNodes, fullEdges, expandedRef.current, showAllRef.current);
+  }, [fullEdges, fullNodes, rebuildGraph, seoMode]);
 
   const loadKeywords = useCallback(
     async (slug: string) => {
