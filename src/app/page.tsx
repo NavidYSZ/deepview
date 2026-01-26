@@ -250,6 +250,25 @@ const ArrowIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+const EyeIcon = ({ className }: { className?: string }) => (
+  <svg
+    className={className}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    aria-hidden="true"
+  >
+    <path
+      d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <circle cx="12" cy="12" r="3.2" stroke="currentColor" strokeWidth="1.7" />
+  </svg>
+);
+
 const GhostNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
   const cardHeight = Math.max(data?.cardHeight || 0, CARD_MIN_HEIGHT);
   return (
@@ -393,6 +412,13 @@ const toolbarPlaceholders = ["↔", "🔍", "⟳", "◇", "⚡", "≡"];
 const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
   const isError = data?.unreachable || (data?.statusCode ?? 200) >= 400;
   const borderColor = isError ? "#ef4444" : data?.isRoot ? "#8f6cff" : "#2f6bff";
+  const seoFlag = data?.seoFlag as "page1" | "threshold" | undefined;
+  const seoBorder =
+    seoFlag === "page1"
+      ? "2px solid #d4a017"
+      : seoFlag === "threshold"
+      ? "2px dashed #d4a017"
+      : null;
   const showToggle = data?.hasChildren && !data?.isRoot;
   const cardHeight = Math.max(data?.cardHeight || 0, CARD_MIN_HEIGHT);
 
@@ -403,7 +429,8 @@ const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
           data?.isNew ? "animate-[fade-in-up_0.24s_ease]" : ""
         }`}
         style={{
-          border: `2px solid ${borderColor}`,
+          border: seoBorder || `2px solid ${borderColor}`,
+          borderStyle: seoBorder?.includes("dashed") ? "dashed" : undefined,
           minHeight: cardHeight,
           width: CARD_WIDTH,
         }}
@@ -522,6 +549,7 @@ export default function HomePage() {
   const showAllRef = useRef(false);
   const [showAll, setShowAll] = useState(false);
   const [viewMode, setViewMode] = useState<"tree" | "cards">("tree");
+  const [seoMode, setSeoMode] = useState(false);
   const [cardParentId, setCardParentId] = useState<string>("root");
   const [cardHistory, setCardHistory] = useState<string[]>([]);
   const [cardTransitionPhase, setCardTransitionPhase] = useState<"idle" | "out" | "in">("idle");
@@ -575,6 +603,23 @@ export default function HomePage() {
     const key = normalizePathValue(selectedNode.data?.path || "/");
     return suggestionsByPath[key] || [];
   }, [selectedNode, suggestionsByPath]);
+
+  const getSeoFlag = useCallback(
+    (path?: string | null) => {
+      const list = keywordsByPath[normalizePathValue(path || "/")] || [];
+      const hasPage1 = list.some((k) => {
+        const pos = k.position ?? 9999;
+        return pos > 0 && pos <= 10;
+      });
+      if (hasPage1) return "page1";
+      const hasThreshold = list.some((k) => {
+        const pos = k.position ?? 9999;
+        return pos > 10 && pos <= 20;
+      });
+      return hasThreshold ? "threshold" : undefined;
+    },
+    [keywordsByPath]
+  );
 
   const nodesById = useMemo(() => new Map(fullNodes.map((n) => [n.id, n])), [fullNodes]);
   const effectiveEdges = useMemo(() => [...fullEdges, ...buildGhostEdges(fullNodes)], [fullEdges, fullNodes]);
@@ -633,6 +678,14 @@ export default function HomePage() {
     }
   }, [viewMode]);
 
+  useEffect(() => {
+    if (seoMode) {
+      rebuildGraph(fullNodes, fullEdges, expandedRef.current, showAllRef.current);
+    } else {
+      rebuildGraph(fullNodes, fullEdges, expandedRef.current, showAllRef.current);
+    }
+  }, [fullEdges, fullNodes, rebuildGraph, seoMode]);
+
   const animateCardSwap = useCallback(
     (nextParentId: string, pushHistory: boolean) => {
       if (cardTransitionPhase !== "idle") return;
@@ -652,9 +705,12 @@ export default function HomePage() {
     [cardParentId, cardTransitionPhase]
   );
 
-  const handleCardDetails = useCallback((node: FlowNode) => {
-    setSelectedNode(node);
-  }, []);
+  const handleCardDetails = useCallback(
+    (node: FlowNode) => {
+      setSelectedNode((prev) => (prev?.id === node.id ? null : node));
+    },
+    []
+  );
 
   const handleCardDrill = useCallback(
     (node: FlowNode) => {
@@ -887,45 +943,49 @@ export default function HomePage() {
         (edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target)
       );
 
-        const decoratedNodes = visibleNodes.map((node) => ({
-          ...node,
-          data: {
-            ...node.data,
-            depth: depthFromNode(node),
-            hasChildren: (childrenMapFull[node.id] || []).length > 0,
-            expanded: expandedSet.has(node.id),
-            isNew: !prevVisibleRef.current.has(node.id),
-            onToggle: () => {
-              const nextExpanded = new Set(expandedRef.current);
-              if (nextExpanded.has(node.id)) {
-                nextExpanded.delete(node.id);
-              } else {
-                nextExpanded.add(node.id);
-              }
-              expandedRef.current = nextExpanded;
-              showAllRef.current = false;
-              setShowAll(false);
-              setSelectedNode((prev) => {
-                if (prev && prev.id === node.id) {
-                  return { ...node };
+        const decoratedNodes = visibleNodes.map((node) => {
+          const seoFlag = seoMode ? getSeoFlag(node.data?.path || (node.data?.isRoot ? "/" : "")) : undefined;
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              depth: depthFromNode(node),
+              hasChildren: (childrenMapFull[node.id] || []).length > 0,
+              expanded: expandedSet.has(node.id),
+              isNew: !prevVisibleRef.current.has(node.id),
+              seoFlag,
+              onToggle: () => {
+                const nextExpanded = new Set(expandedRef.current);
+                if (nextExpanded.has(node.id)) {
+                  nextExpanded.delete(node.id);
+                } else {
+                  nextExpanded.add(node.id);
                 }
-                return prev;
-              });
-              rebuildGraph(srcNodes, srcEdges, nextExpanded, false);
+                expandedRef.current = nextExpanded;
+                showAllRef.current = false;
+                setShowAll(false);
+                setSelectedNode((prev) => {
+                  if (prev && prev.id === node.id) {
+                    return { ...node };
+                  }
+                  return prev;
+                });
+                rebuildGraph(srcNodes, srcEdges, nextExpanded, false);
+              },
+              onAddGhostDown: () => handleAddGhostRelativeRef.current?.(node, "down"),
+              onAddGhostRight: () => handleAddGhostRelativeRef.current?.(node, "right"),
+              onDeleteGhost: () => handleDeleteGhost(node),
+              orderAfter: node.data?.orderAfter,
             },
-            onAddGhostDown: () => handleAddGhostRelativeRef.current?.(node, "down"),
-            onAddGhostRight: () => handleAddGhostRelativeRef.current?.(node, "right"),
-            onDeleteGhost: () => handleDeleteGhost(node),
-            orderAfter: node.data?.orderAfter,
-          },
-        }));
+          };
+        });
 
       const layout = applyLayout(decoratedNodes, visibleEdges);
       setNodes(layout.nodes);
       setEdges(layout.edges);
       prevVisibleRef.current = visibleIds;
     },
-    [applyLayout, handleDeleteGhost]
+    [applyLayout, handleDeleteGhost, getSeoFlag, seoMode]
   );
 
   const loadKeywords = useCallback(
@@ -1612,6 +1672,31 @@ export default function HomePage() {
           </div>
         )}
         <button
+          onClick={() => setSeoMode((v) => !v)}
+          className={`flex items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold shadow-sm ring-1 ring-slate-100 transition ${
+            seoMode ? "bg-amber-100 text-amber-800 ring-amber-200" : "bg-white text-slate-700"
+          }`}
+          aria-label="SEO Modus umschalten"
+        >
+          <span
+            className={`flex h-6 w-10 items-center rounded-full bg-slate-200 p-0.5 transition ${
+              seoMode ? "justify-end bg-amber-400/60" : "justify-start"
+            }`}
+          >
+            <span className="h-5 w-5 rounded-full bg-white shadow" />
+          </span>
+          {seoMode ? (
+            <span className="flex items-center gap-1">
+              <span>SEO</span>
+            </span>
+          ) : (
+            <span className="flex items-center gap-1">
+              <EyeIcon className="h-4 w-4" />
+              <span>Normal</span>
+            </span>
+          )}
+        </button>
+        <button
           className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-100"
           onClick={() => showStatus("Bereits automatisch gespeichert.")}
         >
@@ -1736,6 +1821,7 @@ export default function HomePage() {
                     const showStatusBadge = unreachable || (status && status >= 400);
                     const statusLabel =
                       typeof status === "number" ? status.toString() : unreachable ? "—" : "";
+                    const seoFlag = seoMode ? getSeoFlag(node.data?.path) : undefined;
                     const title =
                       node.data?.metaTitle || node.data?.label || node.data?.path || "Seite";
                     const desc = node.data?.metaDescription || node.data?.h1 || "Keine Beschreibung";
@@ -1743,9 +1829,17 @@ export default function HomePage() {
                       <button
                         key={node.id}
                         onClick={() => handleCardDetails(node)}
-                        className={`group relative flex h-full flex-col rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-left shadow-[0_10px_30px_rgba(0,0,0,0.05)] transition hover:-translate-y-0.5 hover:shadow-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 ${
+                        className={`group relative flex h-full flex-col rounded-2xl bg-white/90 px-4 py-3 text-left shadow-[0_10px_30px_rgba(0,0,0,0.05)] transition hover:-translate-y-0.5 hover:shadow-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 ${
                           isSelected ? "ring-2 ring-[#2f6bff]" : "ring-1 ring-transparent"
                         }`}
+                        style={{
+                          border:
+                            seoFlag === "page1"
+                              ? "2px solid #d4a017"
+                              : seoFlag === "threshold"
+                              ? "2px dashed #d4a017"
+                              : "1px solid rgba(226, 232, 240, 1)",
+                        }}
                       >
                           <div className="flex items-start justify-between gap-2">
                             <div className="flex flex-col">
