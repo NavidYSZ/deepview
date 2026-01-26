@@ -106,13 +106,11 @@ async function fetchSitemapUrls(root: URL): Promise<URL[]> {
   return urls;
 }
 
-export async function crawlDomain(
-  domain: string,
-  maxDepth: number = 1
-): Promise<CrawlResult> {
+export async function crawlDomain(domain: string, ..._rest: unknown[]): Promise<CrawlResult> {
   const normalized = normalizeDomain(domain);
   const rootUrl = new URL(normalized);
   let rootHost = rootUrl.hostname;
+  void _rest;
 
   const pages = new Map<string, PageInfo>();
 
@@ -212,7 +210,6 @@ export async function crawlDomain(
 
       for (const link of links) {
         if (!matchesHost(link.hostname, rootHost)) continue;
-        const childPath = cleanPath(link);
         addPage(link);
         queue.push(link);
       }

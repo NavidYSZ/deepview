@@ -195,6 +195,43 @@ const InfinityIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+const GridIcon = ({ className }: { className?: string }) => (
+  <svg
+    className={className}
+    viewBox="0 0 20 20"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    aria-hidden="true"
+  >
+    <rect x="2" y="2" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+    <rect x="12" y="2" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+    <rect x="2" y="12" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+    <rect x="12" y="12" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6" />
+  </svg>
+);
+
+const TreeIcon = ({ className }: { className?: string }) => (
+  <svg
+    className={className}
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    aria-hidden="true"
+  >
+    <path
+      d="M12 4v4m0 0H7a2 2 0 0 0-2 2v1m7-3h5a2 2 0 0 1 2 2v1m-7 0v6m0-6H7m5 0h5"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <circle cx="12" cy="18.5" r="1.7" stroke="currentColor" strokeWidth="1.4" />
+    <circle cx="4.5" cy="12" r="1.7" stroke="currentColor" strokeWidth="1.4" />
+    <circle cx="19.5" cy="12" r="1.7" stroke="currentColor" strokeWidth="1.4" />
+    <circle cx="12" cy="4" r="1.7" stroke="currentColor" strokeWidth="1.4" />
+  </svg>
+);
+
 const GhostNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
   const cardHeight = Math.max(data?.cardHeight || 0, CARD_MIN_HEIGHT);
   return (
@@ -466,11 +503,15 @@ export default function HomePage() {
   const expandedRef = useRef<Set<string>>(new Set());
   const showAllRef = useRef(false);
   const [showAll, setShowAll] = useState(false);
+  const [viewMode, setViewMode] = useState<"tree" | "cards">("tree");
+  const [cardParentId, setCardParentId] = useState<string>("root");
+  const [cardHistory, setCardHistory] = useState<string[]>([]);
+  const [cardTransitionPhase, setCardTransitionPhase] = useState<"idle" | "out" | "in">("idle");
   const prevVisibleRef = useRef<Set<string>>(new Set());
   const keywordFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const nodeTypes = useMemo(() => ({ card: CardNode, ghost: GhostNode }), []);
-  const hasGraph = nodes.length > 0;
+  const hasGraph = fullNodes.length > 0;
   const depthOptions = useMemo(() => [1, 2, 3, 4, 5], []);
   const defaultEdgeOptions = useMemo(
     () => ({
@@ -517,6 +558,31 @@ export default function HomePage() {
     return suggestionsByPath[key] || [];
   }, [selectedNode, suggestionsByPath]);
 
+  const nodesById = useMemo(() => new Map(fullNodes.map((n) => [n.id, n])), [fullNodes]);
+  const effectiveEdges = useMemo(() => [...fullEdges, ...buildGhostEdges(fullNodes)], [fullEdges, fullNodes]);
+  const childrenByParent = useMemo(() => {
+    const map: Record<string, FlowNode[]> = {};
+    effectiveEdges.forEach((edge) => {
+      const child = nodesById.get(edge.target);
+      if (!child) return;
+      map[edge.source] = map[edge.source] || [];
+      map[edge.source].push(child);
+    });
+    Object.entries(map).forEach(([parentId, list]) => {
+      const orderedIds = reorderChildrenByOrderAfter(
+        list.map((n) => n.id),
+        nodesById
+      );
+      map[parentId] = orderedIds
+        .map((id) => nodesById.get(id))
+        .filter(Boolean) as FlowNode[];
+    });
+    return map;
+  }, [effectiveEdges, nodesById]);
+
+  const currentCardCluster = useMemo(() => childrenByParent[cardParentId] || [], [cardParentId, childrenByParent]);
+  const cardParentNode = useMemo(() => nodesById.get(cardParentId) || null, [cardParentId, nodesById]);
+
   const showStatus = useCallback((message: string) => {
     setStatusMessage(message);
   }, []);
@@ -531,6 +597,58 @@ export default function HomePage() {
       clearTimeout(clear);
     };
   }, [statusMessage]);
+
+  useEffect(() => {
+    if (!nodesById.has(cardParentId)) {
+      const fallback = nodesById.has("root") ? "root" : fullNodes[0]?.id || "root";
+      setCardParentId(fallback);
+      setCardHistory([]);
+      setCardTransitionPhase("idle");
+    }
+  }, [cardParentId, fullNodes, nodesById]);
+
+  useEffect(() => {
+    if (viewMode === "cards") {
+      setCardParentId("root");
+      setCardHistory([]);
+      setCardTransitionPhase("idle");
+    }
+  }, [viewMode]);
+
+  const animateCardSwap = useCallback(
+    (nextParentId: string, pushHistory: boolean) => {
+      if (cardTransitionPhase !== "idle") return;
+      setCardTransitionPhase("out");
+      setTimeout(() => {
+        setCardParentId(nextParentId);
+        setCardHistory((prev) => {
+          if (pushHistory) return [...prev, cardParentId];
+          const next = [...prev];
+          next.pop();
+          return next;
+        });
+        setCardTransitionPhase("in");
+        setTimeout(() => setCardTransitionPhase("idle"), 200);
+      }, 140);
+    },
+    [cardParentId, cardTransitionPhase]
+  );
+
+  const handleCardOpen = useCallback(
+    (node: FlowNode) => {
+      setSelectedNode(node);
+      const hasKids = (childrenByParent[node.id] || []).length > 0;
+      if (!hasKids) return;
+      animateCardSwap(node.id, true);
+    },
+    [animateCardSwap, childrenByParent]
+  );
+
+  const handleCardBack = useCallback(() => {
+    if (cardParentId === "root" && cardHistory.length === 0) return;
+    const previousParent = cardHistory[cardHistory.length - 1] || "root";
+    animateCardSwap(previousParent, false);
+  }, [animateCardSwap, cardHistory, cardParentId]);
 
   const handleDeleteGhost = useCallback(
     async (node: FlowNode) => {
@@ -1380,6 +1498,10 @@ export default function HomePage() {
     }
   };
 
+  const toggleViewMode = useCallback(() => {
+    setViewMode((prev) => (prev === "tree" ? "cards" : "tree"));
+  }, []);
+
   return (
     <div className="relative h-screen w-full overflow-hidden bg-[#f9fbff] text-slate-900">
       {statusMessage && (
@@ -1476,11 +1598,26 @@ export default function HomePage() {
         <button
           className={`rounded-full px-3 py-2 text-lg shadow-sm ring-1 ring-slate-100 ${
             showAll ? "bg-slate-900 text-white" : "bg-white text-slate-700"
-          }`}
+          } ${viewMode === "cards" ? "opacity-40 cursor-not-allowed" : ""}`}
           onClick={toggleShowAll}
+          disabled={viewMode === "cards"}
           aria-label="Alle Ebenen umschalten"
         >
           🖥
+        </button>
+        <button
+          className={`rounded-full px-3 py-2 text-lg shadow-sm ring-1 ring-slate-100 ${
+            viewMode === "cards" ? "bg-slate-900 text-white" : "bg-white text-slate-700"
+          }`}
+          onClick={toggleViewMode}
+          aria-label="Ansicht wechseln"
+          title={viewMode === "tree" ? "Auf Kartenansicht umschalten" : "Auf Baumansicht umschalten"}
+        >
+          {viewMode === "tree" ? (
+            <GridIcon className="h-5 w-5" />
+          ) : (
+            <TreeIcon className="h-5 w-5" />
+          )}
         </button>
         <button
           className="rounded-full bg-white px-3 py-2 text-lg shadow-sm ring-1 ring-slate-100"
@@ -1492,37 +1629,148 @@ export default function HomePage() {
       </div>
 
       <div className="absolute inset-0 pt-20 pb-28">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          defaultEdgeOptions={defaultEdgeOptions}
-          fitView
-          minZoom={0.3}
-          maxZoom={2}
-          fitViewOptions={{ padding: 0.4 }}
-          panOnScroll
-          panOnScrollMode={PanOnScrollMode.Free}
-          zoomOnScroll={false}
-          zoomOnPinch
-          proOptions={{ hideAttribution: true }}
-          className="rounded-2xl"
-          onNodeClick={(_, node) => setSelectedNode(node as FlowNode)}
-          onPaneClick={() => setSelectedNode(null)}
-          onNodeDragStop={(_, node) => {
-            if (node.type === "ghost") {
-              setGhostNodes((prev) =>
-                prev.map((n) => (n.id === node.id ? { ...n, position: node.position } : n))
-              );
-              setFullNodes((prev) =>
-                prev.map((n) => (n.id === node.id ? { ...n, position: node.position } : n))
-              );
-              handleUpdateGhostPosition(node as FlowNode);
-            }
-          }}
-        >
-          <Background gap={26} color="#e7ecfb" />
-        </ReactFlow>
+        {viewMode === "tree" ? (
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            defaultEdgeOptions={defaultEdgeOptions}
+            fitView
+            minZoom={0.3}
+            maxZoom={2}
+            fitViewOptions={{ padding: 0.4 }}
+            panOnScroll
+            panOnScrollMode={PanOnScrollMode.Free}
+            zoomOnScroll={false}
+            zoomOnPinch
+            proOptions={{ hideAttribution: true }}
+            className="rounded-2xl"
+            onNodeClick={(_, node) => setSelectedNode(node as FlowNode)}
+            onPaneClick={() => setSelectedNode(null)}
+            onNodeDragStop={(_, node) => {
+              if (node.type === "ghost") {
+                setGhostNodes((prev) =>
+                  prev.map((n) => (n.id === node.id ? { ...n, position: node.position } : n))
+                );
+                setFullNodes((prev) =>
+                  prev.map((n) => (n.id === node.id ? { ...n, position: node.position } : n))
+                );
+                handleUpdateGhostPosition(node as FlowNode);
+              }
+            }}
+          >
+            <Background gap={26} color="#e7ecfb" />
+          </ReactFlow>
+        ) : (
+          <div className="flex h-full flex-col overflow-y-auto px-6">
+            <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 pb-10">
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                <div className="min-w-[200px]">
+                  <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
+                    Ebene
+                  </div>
+                  <div className="text-lg font-semibold text-slate-800">
+                    {cardParentNode?.data?.metaTitle ||
+                      cardParentNode?.data?.label ||
+                      activeDomain ||
+                      "Root"}
+                  </div>
+                  <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
+                    {cardParentNode?.data?.path || "/"}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-600 ring-1 ring-slate-200">
+                    {currentCardCluster.length} Karten
+                  </span>
+                  <button
+                    onClick={handleCardBack}
+                    disabled={cardParentId === "root" && cardHistory.length === 0}
+                    className="rounded-full bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    ← Ebene zurück
+                  </button>
+                </div>
+              </div>
+
+              <div className="relative min-h-[260px]">
+                <div
+                  className={`grid auto-rows-fr gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 ${
+                    cardTransitionPhase === "out"
+                      ? "card-anim-out"
+                      : cardTransitionPhase === "in"
+                      ? "card-anim-in"
+                      : ""
+                  }`}
+                >
+                  {currentCardCluster.map((node) => {
+                    const hasKids = (childrenByParent[node.id] || []).length > 0;
+                    const isSelected = selectedNode?.id === node.id;
+                    const status = node.data?.statusCode;
+                    const unreachable = node.data?.unreachable;
+                    const title =
+                      node.data?.metaTitle || node.data?.label || node.data?.path || "Seite";
+                    const desc = node.data?.metaDescription || node.data?.h1 || "Keine Beschreibung";
+                    return (
+                      <button
+                        key={node.id}
+                        onClick={() => handleCardOpen(node)}
+                        className={`group relative flex h-full flex-col rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-left shadow-[0_10px_30px_rgba(0,0,0,0.05)] transition hover:-translate-y-0.5 hover:shadow-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 ${
+                          isSelected ? "ring-2 ring-[#2f6bff]" : "ring-1 ring-transparent"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex flex-col">
+                            <span className="text-[10px] uppercase tracking-[0.18em] text-slate-400">
+                              {node.data?.path || "/"}
+                            </span>
+                            <span className="mt-1 text-base font-semibold leading-tight text-slate-800">
+                              {title.length > 46 ? `${title.slice(0, 46)}…` : title}
+                            </span>
+                          </div>
+                          <span
+                            className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
+                              unreachable || (status && status >= 400)
+                                ? "bg-rose-50 text-rose-700 ring-1 ring-rose-100"
+                                : status
+                                ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"
+                                : "bg-slate-100 text-slate-600 ring-1 ring-slate-200"
+                            }`}
+                          >
+                            {unreachable ? "unreachable" : status || "ok"}
+                          </span>
+                        </div>
+                        <div className="mt-2 line-clamp-3 text-sm leading-relaxed text-slate-600">
+                          {desc}
+                        </div>
+                        <div className="mt-auto pt-3">
+                          <div className="flex items-center justify-between text-sm font-semibold text-slate-700">
+                            <span>{hasKids ? "Öffnen" : "Details"}</span>
+                            <span
+                              className={`flex h-7 w-7 items-center justify-center rounded-full transition ${
+                                hasKids
+                                  ? "bg-slate-900 text-white group-hover:scale-105"
+                                  : "bg-slate-100 text-slate-600"
+                              }`}
+                            >
+                              {hasKids ? "→" : "•"}
+                            </span>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {currentCardCluster.length === 0 && (
+                  <div className="flex h-40 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white/60 text-sm text-slate-500">
+                    Keine Unterseiten auf dieser Ebene.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {!hasGraph && (
           <div className="pointer-events-none absolute left-1/2 top-1/2 w-full max-w-xl -translate-x-1/2 -translate-y-1/2 text-center text-sm text-slate-500">

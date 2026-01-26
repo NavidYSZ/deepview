@@ -37,3 +37,33 @@ body {
   transition: transform 285ms ease, opacity 200ms ease;
   will-change: transform, opacity;
 }
+
+@keyframes card-fade-in {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes card-fade-out {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.98);
+  }
+}
+
+.card-anim-in {
+  animation: card-fade-in 200ms ease forwards;
+}
+
+.card-anim-out {
+  animation: card-fade-out 160ms ease forwards;
+}
