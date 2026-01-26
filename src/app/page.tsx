@@ -232,6 +232,24 @@ const TreeIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+const ArrowIcon = ({ className }: { className?: string }) => (
+  <svg
+    className={className}
+    viewBox="0 0 20 20"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    aria-hidden="true"
+  >
+    <path
+      d="M7.5 4.5 13 10l-5.5 5.5"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 const GhostNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
   const cardHeight = Math.max(data?.cardHeight || 0, CARD_MIN_HEIGHT);
   return (
@@ -634,9 +652,12 @@ export default function HomePage() {
     [cardParentId, cardTransitionPhase]
   );
 
-  const handleCardOpen = useCallback(
+  const handleCardDetails = useCallback((node: FlowNode) => {
+    setSelectedNode(node);
+  }, []);
+
+  const handleCardDrill = useCallback(
     (node: FlowNode) => {
-      setSelectedNode(node);
       const hasKids = (childrenByParent[node.id] || []).length > 0;
       if (!hasKids) return;
       animateCardSwap(node.id, true);
@@ -1708,59 +1729,68 @@ export default function HomePage() {
                     const isSelected = selectedNode?.id === node.id;
                     const status = node.data?.statusCode;
                     const unreachable = node.data?.unreachable;
+                    const showStatusBadge = unreachable || (status && status >= 400);
+                    const statusLabel =
+                      typeof status === "number" ? status.toString() : unreachable ? "—" : "";
                     const title =
                       node.data?.metaTitle || node.data?.label || node.data?.path || "Seite";
                     const desc = node.data?.metaDescription || node.data?.h1 || "Keine Beschreibung";
                     return (
                       <button
                         key={node.id}
-                        onClick={() => handleCardOpen(node)}
+                        onClick={() => handleCardDetails(node)}
                         className={`group relative flex h-full flex-col rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 text-left shadow-[0_10px_30px_rgba(0,0,0,0.05)] transition hover:-translate-y-0.5 hover:shadow-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400 ${
                           isSelected ? "ring-2 ring-[#2f6bff]" : "ring-1 ring-transparent"
                         }`}
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex flex-col">
-                            <span className="text-[10px] uppercase tracking-[0.18em] text-slate-400">
-                              {node.data?.path || "/"}
-                            </span>
-                            <span className="mt-1 text-base font-semibold leading-tight text-slate-800">
-                              {title.length > 46 ? `${title.slice(0, 46)}…` : title}
-                            </span>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex flex-col">
+                              <span className="text-[10px] uppercase tracking-[0.18em] text-slate-400">
+                                {node.data?.path || "/"}
+                              </span>
+                              <span className="mt-1 text-base font-semibold leading-tight text-slate-800">
+                                {title.length > 46 ? `${title.slice(0, 46)}…` : title}
+                              </span>
+                            </div>
+                            {showStatusBadge && (
+                              <span
+                                className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
+                                  unreachable || (status && status >= 400)
+                                    ? "bg-rose-50 text-rose-700 ring-1 ring-rose-100"
+                                    : "bg-slate-100 text-slate-600 ring-1 ring-slate-200"
+                                }`}
+                              >
+                                {statusLabel}
+                              </span>
+                            )}
                           </div>
-                          <span
-                            className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
-                              unreachable || (status && status >= 400)
-                                ? "bg-rose-50 text-rose-700 ring-1 ring-rose-100"
-                                : status
-                                ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100"
-                                : "bg-slate-100 text-slate-600 ring-1 ring-slate-200"
-                            }`}
-                          >
-                            {unreachable ? "unreachable" : status || "ok"}
-                          </span>
-                        </div>
-                        <div className="mt-2 line-clamp-3 text-sm leading-relaxed text-slate-600">
-                          {desc}
-                        </div>
-                        <div className="mt-auto pt-3">
-                          <div className="flex items-center justify-between text-sm font-semibold text-slate-700">
-                            <span>{hasKids ? "Öffnen" : "Details"}</span>
-                            <span
-                              className={`flex h-7 w-7 items-center justify-center rounded-full transition ${
-                                hasKids
-                                  ? "bg-slate-900 text-white group-hover:scale-105"
-                                  : "bg-slate-100 text-slate-600"
-                              }`}
-                            >
-                              {hasKids ? "→" : "•"}
-                            </span>
+                          <div className="mt-2 line-clamp-3 text-sm leading-relaxed text-slate-600">
+                            {desc}
                           </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
+                          <div className="mt-auto pt-3">
+                            <div className="flex items-center justify-between text-sm font-semibold text-slate-700">
+                              <span>Details öffnen</span>
+                              {hasKids ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCardDrill(node);
+                                  }}
+                                  className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-white transition hover:-translate-y-[1px] hover:shadow-md"
+                                  aria-label="Ebene tiefer öffnen"
+                                >
+                                  <ArrowIcon className="h-4 w-4" />
+                                </button>
+                              ) : (
+                                <span className="h-7 w-7" aria-hidden="true" />
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
 
                 {currentCardCluster.length === 0 && (
                   <div className="flex h-40 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white/60 text-sm text-slate-500">
