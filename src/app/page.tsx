@@ -270,6 +270,19 @@ const EyeIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+const SearchIcon = ({ className }: { className?: string }) => (
+  <svg
+    className={className}
+    viewBox="0 0 20 20"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    aria-hidden="true"
+  >
+    <circle cx="9" cy="9" r="5.5" stroke="currentColor" strokeWidth="1.6" />
+    <path d="m12.5 12.5 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+  </svg>
+);
+
 const GhostNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
   const cardHeight = Math.max(data?.cardHeight || 0, CARD_MIN_HEIGHT);
   return (
@@ -1670,28 +1683,22 @@ export default function HomePage() {
         )}
         <button
           onClick={() => setSeoMode((v) => !v)}
-          className={`flex items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold shadow-sm ring-1 ring-slate-100 transition ${
-            seoMode ? "bg-amber-100 text-amber-800 ring-amber-200" : "bg-white text-slate-700"
-          }`}
+          className={`relative flex h-10 w-20 items-center rounded-full transition ${
+            seoMode ? "bg-amber-200/70 ring-amber-200" : "bg-slate-200/70 ring-slate-200"
+          } ring-1 shadow-sm`}
           aria-label="SEO Modus umschalten"
         >
-          <span
-            className={`flex h-6 w-10 items-center rounded-full bg-slate-200 p-0.5 transition ${
-              seoMode ? "justify-end bg-amber-400/60" : "justify-start"
-            }`}
-          >
-            <span className="h-5 w-5 rounded-full bg-white shadow" />
+          <span className="absolute left-3 text-slate-600">
+            <EyeIcon className={`h-5 w-5 ${seoMode ? "opacity-60" : "opacity-100"}`} />
           </span>
-          {seoMode ? (
-            <span className="flex items-center gap-1">
-              <span>SEO</span>
-            </span>
-          ) : (
-            <span className="flex items-center gap-1">
-              <EyeIcon className="h-4 w-4" />
-              <span>Normal</span>
-            </span>
-          )}
+          <span className="absolute right-3 text-amber-700">
+            <SearchIcon className={`h-5 w-5 ${seoMode ? "opacity-100" : "opacity-40"}`} />
+          </span>
+          <span
+            className={`absolute h-8 w-8 rounded-full bg-white shadow-md transition-transform duration-200 ease-out ${
+              seoMode ? "translate-x-8" : "translate-x-0"
+            }`}
+          />
         </button>
         <button
           className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-100"
