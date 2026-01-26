@@ -1683,22 +1683,18 @@ export default function HomePage() {
         )}
         <button
           onClick={() => setSeoMode((v) => !v)}
-          className={`relative flex h-10 w-20 items-center rounded-full transition ${
-            seoMode ? "bg-amber-200/70 ring-amber-200" : "bg-slate-200/70 ring-slate-200"
-          } ring-1 shadow-sm`}
+          className={`relative h-10 w-20 rounded-full ring-1 shadow-sm transition ${
+            seoMode ? "bg-[#e8f0ff] ring-[#c7d8ff]" : "bg-slate-200/80 ring-slate-200"
+          }`}
           aria-label="SEO Modus umschalten"
         >
-          <span className="absolute left-3 text-slate-600">
-            <EyeIcon className={`h-5 w-5 ${seoMode ? "opacity-60" : "opacity-100"}`} />
-          </span>
-          <span className="absolute right-3 text-amber-700">
-            <SearchIcon className={`h-5 w-5 ${seoMode ? "opacity-100" : "opacity-40"}`} />
-          </span>
           <span
-            className={`absolute h-8 w-8 rounded-full bg-white shadow-md transition-transform duration-200 ease-out ${
-              seoMode ? "translate-x-8" : "translate-x-0"
+            className={`absolute left-1 top-1 flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-[0_6px_18px_rgba(0,0,0,0.12)] transition-transform duration-200 ease-out ${
+              seoMode ? "translate-x-10 text-[#1f4eff]" : "translate-x-0"
             }`}
-          />
+          >
+            {seoMode ? <SearchIcon className="h-[18px] w-[18px]" /> : <EyeIcon className="h-[18px] w-[18px]" />}
+          </span>
         </button>
         <button
           className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-100"
