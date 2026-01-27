@@ -8,6 +8,7 @@ import ReactFlow, {
   Handle,
   Node,
   NodeProps,
+  ReactFlowInstance,
   PanOnScrollMode,
   Position,
 } from "reactflow";
@@ -567,8 +568,11 @@ export default function HomePage() {
   const [cardParentId, setCardParentId] = useState<string>("root");
   const [cardHistory, setCardHistory] = useState<string[]>([]);
   const [cardTransitionPhase, setCardTransitionPhase] = useState<"idle" | "out" | "in">("idle");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const prevVisibleRef = useRef<Set<string>>(new Set());
   const keywordFileInputRef = useRef<HTMLInputElement | null>(null);
+  const reactFlowInstance = useRef<ReactFlowInstance | null>(null);
 
   const nodeTypes = useMemo(() => ({ card: CardNode, ghost: GhostNode }), []);
   const hasGraph = fullNodes.length > 0;
@@ -637,6 +641,13 @@ export default function HomePage() {
 
   const nodesById = useMemo(() => new Map(fullNodes.map((n) => [n.id, n])), [fullNodes]);
   const effectiveEdges = useMemo(() => [...fullEdges, ...buildGhostEdges(fullNodes)], [fullEdges, fullNodes]);
+  const parentById = useMemo(() => {
+    const map = new Map<string, string>();
+    effectiveEdges.forEach((e) => {
+      map.set(e.target, e.source);
+    });
+    return map;
+  }, [effectiveEdges]);
   const childrenByParent = useMemo(() => {
     const map: Record<string, FlowNode[]> = {};
     effectiveEdges.forEach((edge) => {
@@ -659,6 +670,23 @@ export default function HomePage() {
 
   const currentCardCluster = useMemo(() => childrenByParent[cardParentId] || [], [cardParentId, childrenByParent]);
   const cardParentNode = useMemo(() => nodesById.get(cardParentId) || null, [cardParentId, nodesById]);
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    const maxResults = 20;
+    const results: Array<{ id: string; label: string; path: string; parentId: string | null; depth: number }> = [];
+    fullNodes.forEach((n) => {
+      if (n.data?.isGhost) return;
+      const label = n.data?.metaTitle || n.data?.label || n.data?.path || "";
+      const path = n.data?.path || "/";
+      const haystack = `${label} ${path} ${n.data?.metaDescription || ""}`.toLowerCase();
+      if (!haystack.includes(q)) return;
+      const parentId = parentById.get(n.id) || null;
+      const depth = path === "/" ? 0 : path.replace(/^\//, "").split("/").filter(Boolean).length;
+      results.push({ id: n.id, label, path, parentId, depth });
+    });
+    return results.slice(0, maxResults);
+  }, [fullNodes, parentById, searchQuery]);
 
   const showStatus = useCallback((message: string) => {
     setStatusMessage(message);
@@ -725,6 +753,73 @@ export default function HomePage() {
       animateCardSwap(node.id, true);
     },
     [animateCardSwap, childrenByParent]
+  );
+
+  const buildCardHistoryForTarget = useCallback(
+    (targetParentId: string) => {
+      const chain: string[] = [];
+      let current = targetParentId;
+      while (current && current !== "root") {
+        const parent = parentById.get(current);
+        if (!parent) break;
+        chain.unshift(parent);
+        current = parent;
+        if (chain.length > 50) break;
+      }
+      return chain;
+    },
+    [parentById]
+  );
+
+  const focusNodeTree = useCallback(
+    (nodeId: string) => {
+      const ancestors = new Set<string>();
+      let current = parentById.get(nodeId);
+      while (current) {
+        ancestors.add(current);
+        current = parentById.get(current);
+      }
+      expandedRef.current = ancestors;
+      showAllRef.current = false;
+      setShowAll(false);
+      rebuildGraph(fullNodes, fullEdges, ancestors, false);
+      setTimeout(() => {
+        const instance = reactFlowInstance.current;
+        if (!instance) return;
+        instance.fitView({ nodes: [{ id: nodeId }], padding: 0.4, duration: 400 });
+      }, 160);
+    },
+    [fullEdges, fullNodes, parentById, rebuildGraph]
+  );
+
+  const focusNodeCards = useCallback(
+    (nodeId: string) => {
+      const target = nodesById.get(nodeId);
+      if (!target) return;
+      const parentId = parentById.get(nodeId) || "root";
+      const hist = buildCardHistoryForTarget(parentId);
+      setCardHistory(hist);
+      setCardParentId(parentId);
+      setCardTransitionPhase("idle");
+      setSelectedNode(target);
+    },
+    [buildCardHistoryForTarget, nodesById, parentById]
+  );
+
+  const handleSearchSelect = useCallback(
+    (nodeId: string) => {
+      const node = nodesById.get(nodeId);
+      if (!node) return;
+      setSearchOpen(false);
+      setSearchQuery("");
+      setSelectedNode(node);
+      if (viewMode === "cards") {
+        focusNodeCards(nodeId);
+      } else {
+        focusNodeTree(nodeId);
+      }
+    },
+    [focusNodeCards, focusNodeTree, nodesById, viewMode]
   );
 
   const handleCardBack = useCallback(() => {
@@ -1702,9 +1797,71 @@ export default function HomePage() {
         >
           Save
         </button>
-        <button className="rounded-full bg-white px-3 py-2 text-lg shadow-sm ring-1 ring-slate-100">
-          🔍
-        </button>
+        <div className="relative">
+          {!searchOpen && (
+            <button
+              className="rounded-full bg-white px-3 py-2 text-lg shadow-sm ring-1 ring-slate-100"
+              onClick={() => {
+                setSearchOpen(true);
+                setSearchFocused(true);
+                setTimeout(() => {
+                  const el = document.getElementById("node-search-input");
+                  el?.focus();
+                }, 10);
+              }}
+              aria-label="Seiten suchen"
+            >
+              🔍
+            </button>
+          )}
+          {searchOpen && (
+            <div className="absolute right-0 z-20 flex items-center gap-2">
+              <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 shadow-lg">
+                <SearchIcon className="h-4 w-4 text-slate-500" />
+                <input
+                  id="node-search-input"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Seite suchen"
+                  className="w-56 border-none text-sm text-slate-800 focus:outline-none"
+                />
+                <button
+                  onClick={() => {
+                    setSearchOpen(false);
+                    setSearchQuery("");
+                  }}
+                  className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600 transition hover:bg-slate-200"
+                >
+                  ×
+                </button>
+              </div>
+              {searchQuery.trim() && searchResults.length === 0 && (
+                <div className="absolute right-0 top-12 w-72 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 shadow-xl">
+                  Keine Treffer.
+                </div>
+              )}
+              {searchResults.length > 0 && (
+                <div className="absolute right-0 top-12 max-h-80 w-80 overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-xl">
+                  {searchResults.map((res) => (
+                    <button
+                      key={res.id}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => handleSearchSelect(res.id)}
+                      className="flex w-full flex-col items-start gap-1 px-3 py-2 text-left transition hover:bg-slate-50"
+                    >
+                      <span className="text-sm font-semibold text-slate-800">
+                        {res.label.length > 54 ? `${res.label.slice(0, 54)}…` : res.label}
+                      </span>
+                      <span className="text-[11px] uppercase tracking-[0.18em] text-slate-400">
+                        {res.path}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
         <button
           className={`rounded-full px-3 py-2 text-lg shadow-sm ring-1 ring-slate-100 ${
             showAll ? "bg-slate-900 text-white" : "bg-white text-slate-700"
@@ -1747,15 +1904,18 @@ export default function HomePage() {
             defaultEdgeOptions={defaultEdgeOptions}
             fitView
             minZoom={0.3}
-            maxZoom={2}
-            fitViewOptions={{ padding: 0.4 }}
-            panOnScroll
-            panOnScrollMode={PanOnScrollMode.Free}
-            zoomOnScroll={false}
-            zoomOnPinch
-            proOptions={{ hideAttribution: true }}
-            className="rounded-2xl"
-            onNodeClick={(_, node) => setSelectedNode(node as FlowNode)}
+          maxZoom={2}
+          fitViewOptions={{ padding: 0.4 }}
+          panOnScroll
+          panOnScrollMode={PanOnScrollMode.Free}
+          zoomOnScroll={false}
+          zoomOnPinch
+          onInit={(instance) => {
+            reactFlowInstance.current = instance;
+          }}
+          proOptions={{ hideAttribution: true }}
+          className="rounded-2xl"
+          onNodeClick={(_, node) => setSelectedNode(node as FlowNode)}
             onPaneClick={() => setSelectedNode(null)}
             onNodeDragStop={(_, node) => {
               if (node.type === "ghost") {
