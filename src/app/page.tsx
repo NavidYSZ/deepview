@@ -771,56 +771,6 @@ export default function HomePage() {
     [parentById]
   );
 
-  const focusNodeTree = useCallback(
-    (nodeId: string) => {
-      const ancestors = new Set<string>();
-      let current = parentById.get(nodeId);
-      while (current) {
-        ancestors.add(current);
-        current = parentById.get(current);
-      }
-      expandedRef.current = ancestors;
-      showAllRef.current = false;
-      setShowAll(false);
-      rebuildGraph(fullNodes, fullEdges, ancestors, false);
-      setTimeout(() => {
-        const instance = reactFlowInstance.current;
-        if (!instance) return;
-        instance.fitView({ nodes: [{ id: nodeId }], padding: 0.4, duration: 400 });
-      }, 160);
-    },
-    [fullEdges, fullNodes, parentById, rebuildGraph]
-  );
-
-  const focusNodeCards = useCallback(
-    (nodeId: string) => {
-      const target = nodesById.get(nodeId);
-      if (!target) return;
-      const parentId = parentById.get(nodeId) || "root";
-      const hist = buildCardHistoryForTarget(parentId);
-      setCardHistory(hist);
-      setCardParentId(parentId);
-      setCardTransitionPhase("idle");
-      setSelectedNode(target);
-    },
-    [buildCardHistoryForTarget, nodesById, parentById]
-  );
-
-  const handleSearchSelect = useCallback(
-    (nodeId: string) => {
-      const node = nodesById.get(nodeId);
-      if (!node) return;
-      setSearchOpen(false);
-      setSearchQuery("");
-      setSelectedNode(node);
-      if (viewMode === "cards") {
-        focusNodeCards(nodeId);
-      } else {
-        focusNodeTree(nodeId);
-      }
-    },
-    [focusNodeCards, focusNodeTree, nodesById, viewMode]
-  );
 
   const handleCardBack = useCallback(() => {
     if (cardParentId === "root" && cardHistory.length === 0) return;
@@ -1092,6 +1042,57 @@ export default function HomePage() {
   useEffect(() => {
     rebuildGraph(fullNodes, fullEdges, expandedRef.current, showAllRef.current);
   }, [fullEdges, fullNodes, rebuildGraph, seoMode]);
+
+  const focusNodeTree = useCallback(
+    (nodeId: string) => {
+      const ancestors = new Set<string>();
+      let current = parentById.get(nodeId);
+      while (current) {
+        ancestors.add(current);
+        current = parentById.get(current);
+      }
+      expandedRef.current = ancestors;
+      showAllRef.current = false;
+      setShowAll(false);
+      rebuildGraph(fullNodes, fullEdges, ancestors, false);
+      setTimeout(() => {
+        const instance = reactFlowInstance.current;
+        if (!instance) return;
+        instance.fitView({ nodes: [{ id: nodeId }], padding: 0.4, duration: 400 });
+      }, 160);
+    },
+    [fullEdges, fullNodes, parentById, rebuildGraph]
+  );
+
+  const focusNodeCards = useCallback(
+    (nodeId: string) => {
+      const target = nodesById.get(nodeId);
+      if (!target) return;
+      const parentId = parentById.get(nodeId) || "root";
+      const hist = buildCardHistoryForTarget(parentId);
+      setCardHistory(hist);
+      setCardParentId(parentId);
+      setCardTransitionPhase("idle");
+      setSelectedNode(target);
+    },
+    [buildCardHistoryForTarget, nodesById, parentById]
+  );
+
+  const handleSearchSelect = useCallback(
+    (nodeId: string) => {
+      const node = nodesById.get(nodeId);
+      if (!node) return;
+      setSearchOpen(false);
+      setSearchQuery("");
+      setSelectedNode(node);
+      if (viewMode === "cards") {
+        focusNodeCards(nodeId);
+      } else {
+        focusNodeTree(nodeId);
+      }
+    },
+    [focusNodeCards, focusNodeTree, nodesById, viewMode]
+  );
 
   const loadKeywords = useCallback(
     async (slug: string) => {
@@ -1803,7 +1804,6 @@ export default function HomePage() {
               className="rounded-full bg-white px-3 py-2 text-lg shadow-sm ring-1 ring-slate-100"
               onClick={() => {
                 setSearchOpen(true);
-                setSearchFocused(true);
                 setTimeout(() => {
                   const el = document.getElementById("node-search-input");
                   el?.focus();
