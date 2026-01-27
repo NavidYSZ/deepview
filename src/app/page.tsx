@@ -37,6 +37,7 @@ type FlowNode = Node<{
   cardHeight?: number;
   cardWidth?: number;
   seoFlag?: "page1" | "threshold";
+  seoKeywords?: { term: string; position: number | null }[];
 }>;
 type FlowEdge = Edge;
 
@@ -570,6 +571,8 @@ export default function HomePage() {
   const [cardTransitionPhase, setCardTransitionPhase] = useState<"idle" | "out" | "in">("idle");
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [brandFilter, setBrandFilter] = useState("");
+  const [brandInputOpen, setBrandInputOpen] = useState(false);
   const prevVisibleRef = useRef<Set<string>>(new Set());
   const keywordFileInputRef = useRef<HTMLInputElement | null>(null);
   const reactFlowInstance = useRef<ReactFlowInstance | null>(null);
@@ -622,21 +625,50 @@ export default function HomePage() {
     return suggestionsByPath[key] || [];
   }, [selectedNode, suggestionsByPath]);
 
+  const isBrandKeyword = useCallback(
+    (kw: Keyword) => {
+      if (!brandFilter.trim()) return false;
+      return kw.term.toLowerCase().includes(brandFilter.trim().toLowerCase());
+    },
+    [brandFilter]
+  );
+
   const getSeoFlag = useCallback(
     (path?: string | null): "page1" | "threshold" | undefined => {
       const list = keywordsByPath[normalizePathValue(path || "/")] || [];
-      const hasPage1 = list.some((k) => {
+      const relevant = brandFilter.trim()
+        ? list.filter((k) => !isBrandKeyword(k))
+        : list;
+      const hasPage1 = relevant.some((k) => {
         const pos = k.position ?? 9999;
         return pos > 0 && pos <= 10;
       });
       if (hasPage1) return "page1";
-      const hasThreshold = list.some((k) => {
+      const hasThreshold = relevant.some((k) => {
         const pos = k.position ?? 9999;
         return pos > 10 && pos <= 20;
       });
       return hasThreshold ? "threshold" : undefined;
     },
-    [keywordsByPath]
+    [brandFilter, isBrandKeyword, keywordsByPath]
+  );
+
+  const getSeoKeywords = useCallback(
+    (path?: string | null) => {
+      const list = keywordsByPath[normalizePathValue(path || "/")] || [];
+      const relevant = brandFilter.trim()
+        ? list.filter((k) => !isBrandKeyword(k))
+        : list;
+      return relevant
+        .filter((k) => {
+          const pos = k.position ?? 9999;
+          return pos > 0 && pos <= 20;
+        })
+        .sort((a, b) => (a.position ?? 9999) - (b.position ?? 9999))
+        .slice(0, 3)
+        .map((k) => ({ term: k.term, position: k.position ?? null }));
+    },
+    [brandFilter, isBrandKeyword, keywordsByPath]
   );
 
   const nodesById = useMemo(() => new Map(fullNodes.map((n) => [n.id, n])), [fullNodes]);
@@ -996,6 +1028,9 @@ export default function HomePage() {
 
         const decoratedNodes = visibleNodes.map((node) => {
           const seoFlag = seoMode ? getSeoFlag(node.data?.path || (node.data?.isRoot ? "/" : "")) : undefined;
+          const seoKeywords = seoMode
+            ? getSeoKeywords(node.data?.path || (node.data?.isRoot ? "/" : ""))
+            : [];
           return {
             ...node,
             data: {
@@ -1005,6 +1040,7 @@ export default function HomePage() {
               expanded: expandedSet.has(node.id),
               isNew: !prevVisibleRef.current.has(node.id),
               seoFlag,
+              seoKeywords,
               onToggle: () => {
                 const nextExpanded = new Set(expandedRef.current);
                 if (nextExpanded.has(node.id)) {
@@ -1036,8 +1072,27 @@ export default function HomePage() {
       setEdges(layout.edges);
       prevVisibleRef.current = visibleIds;
     },
-    [applyLayout, handleDeleteGhost, getSeoFlag, seoMode]
+    [applyLayout, handleDeleteGhost, getSeoFlag, getSeoKeywords, seoMode]
   );
+
+  useEffect(() => {
+    rebuildGraph(fullNodes, fullEdges, expandedRef.current, showAllRef.current);
+  }, [fullEdges, fullNodes, rebuildGraph, seoMode, brandFilter]);
+
+  useEffect(() => {
+    if (!activeProject) return;
+    const stored = window.localStorage.getItem(`brandFilter:${activeProject.slug}`);
+    if (stored !== null) {
+      setBrandFilter(stored);
+    } else {
+      setBrandFilter("");
+    }
+  }, [activeProject]);
+
+  useEffect(() => {
+    if (!activeProject) return;
+    window.localStorage.setItem(`brandFilter:${activeProject.slug}`, brandFilter);
+  }, [activeProject, brandFilter]);
 
   useEffect(() => {
     rebuildGraph(fullNodes, fullEdges, expandedRef.current, showAllRef.current);
@@ -1982,6 +2037,7 @@ export default function HomePage() {
                     const statusLabel =
                       typeof status === "number" ? status.toString() : unreachable ? "—" : "";
                     const seoFlag = seoMode ? getSeoFlag(node.data?.path) : undefined;
+                    const seoKeywords = seoMode ? getSeoKeywords(node.data?.path) : [];
                     const title =
                       node.data?.metaTitle || node.data?.label || node.data?.path || "Seite";
                     const desc = node.data?.metaDescription || node.data?.h1 || "Keine Beschreibung";
@@ -2022,13 +2078,33 @@ export default function HomePage() {
                               </span>
                             )}
                           </div>
-                          <div className="mt-2 line-clamp-3 text-sm leading-relaxed text-slate-600">
-                            {desc}
+                        <div className="mt-2 line-clamp-3 text-sm leading-relaxed text-slate-600">
+                          {desc}
+                        </div>
+                        {seoFlag && seoKeywords.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {seoKeywords.map((kw) => {
+                              const isPage1 = (kw.position ?? 9999) <= 10;
+                              return (
+                                <span
+                                  key={`${kw.term}-${kw.position ?? "np"}`}
+                                  className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
+                                    isPage1
+                                      ? "border border-amber-400 bg-amber-50 text-amber-800"
+                                      : "border border-amber-300 border-dashed bg-amber-25 text-amber-700"
+                                  }`}
+                                >
+                                  {kw.term}
+                                  {kw.position ? ` • ${kw.position}` : ""}
+                                </span>
+                              );
+                            })}
                           </div>
-                          <div className="mt-auto pt-3">
-                            <div className="flex items-center justify-between text-sm font-semibold text-slate-700">
-                              <span>Details öffnen</span>
-                              {hasKids ? (
+                        )}
+                        <div className="mt-auto pt-3">
+                          <div className="flex items-center justify-between text-sm font-semibold text-slate-700">
+                            <span>Details öffnen</span>
+                            {hasKids ? (
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -2222,8 +2298,8 @@ export default function HomePage() {
             </button>
           </div>
 
-          <div className="flex items-center justify-between">
-            <div>
+        <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-1">
               <p className="text-sm font-semibold text-slate-800">Keywords</p>
               <p className="text-xs text-slate-500">
                 Upload (CSV/TSV/XLSX), automatische URL-Zuordnung.
@@ -2231,6 +2307,13 @@ export default function HomePage() {
             </div>
             <div className="flex items-center gap-2">
               {loadingKeywords && <span className="text-xs text-slate-500">Lädt…</span>}
+              <button
+                onClick={() => setBrandInputOpen((v) => !v)}
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50"
+                aria-label="Keyword-Brand-Filter"
+              >
+                ⚙️
+              </button>
               <input
                 ref={keywordFileInputRef}
                 type="file"
@@ -2252,6 +2335,23 @@ export default function HomePage() {
           </div>
         </div>
 
+        {brandInputOpen && (
+          <div className="rounded-2xl bg-white px-3 py-3 shadow-sm ring-1 ring-slate-200">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+              Brand-Filter
+            </p>
+            <p className="text-[11px] text-slate-500">
+              Keywords, die diesen Begriff enthalten, werden für goldene Ränder ignoriert, aber weiter angezeigt.
+            </p>
+            <input
+              value={brandFilter}
+              onChange={(e) => setBrandFilter(e.target.value)}
+              placeholder="z. B. marke, domainname"
+              className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+            />
+          </div>
+        )}
+
           <div className="flex flex-col gap-3">
           {keywordSummaries.length ? (
             keywordSummaries.map((item) => (
@@ -2271,9 +2371,18 @@ export default function HomePage() {
                   {item.sample.map((kw) => (
                     <span
                       key={`${kw.id}-${kw.term}`}
-                      className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200"
+                      className={`flex items-center gap-1 rounded-full bg-white px-2 py-1 text-xs font-semibold ring-1 ${
+                        isBrandKeyword(kw)
+                          ? "border-amber-300/80 text-amber-700 ring-amber-200"
+                          : "text-slate-700 ring-slate-200"
+                      }`}
                     >
                       {kw.term}
+                      {isBrandKeyword(kw) && (
+                        <span className="rounded-full bg-amber-100 px-1.5 py-[1px] text-[10px] font-semibold text-amber-800">
+                          Brand
+                        </span>
+                      )}
                     </span>
                   ))}
                   {item.count > item.sample.length && (
@@ -2605,17 +2714,20 @@ export default function HomePage() {
                     {keywordsForSelected.map((kw) => (
                       <div
                         key={kw.id}
-                        className="rounded-xl bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200"
+                        className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200"
                       >
-                        <div className="flex items-center justify-between gap-2">
+                        <div className="flex flex-col">
                           <span className="text-sm font-semibold text-slate-800">{kw.term}</span>
                           <span className="text-[11px] text-slate-500">
                             {kw.position ? `Pos ${kw.position}` : ""}
-                            {kw.volume
-                              ? `${kw.position ? " • " : ""}SV ${kw.volume}`
-                              : ""}
+                            {kw.volume ? `${kw.position ? " • " : ""}SV ${kw.volume}` : ""}
                           </span>
                         </div>
+                        {isBrandKeyword(kw) && (
+                          <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">
+                            Brand
+                          </span>
+                        )}
                       </div>
                     ))}
                   </div>
