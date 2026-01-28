@@ -433,7 +433,7 @@ const CardNode = ({ data, isConnectable }: NodeProps<FlowNode["data"]>) => {
     seoFlag === "page1"
       ? "2px solid #d4a017"
       : seoFlag === "threshold"
-      ? "2px dashed #d4a017"
+      ? "3px dashed #d4a017"
       : null;
   const showToggle = data?.hasChildren && !data?.isRoot;
   const cardHeight = Math.max(data?.cardHeight || 0, CARD_MIN_HEIGHT);
@@ -2053,7 +2053,7 @@ export default function HomePage() {
                             seoFlag === "page1"
                               ? "2px solid #d4a017"
                               : seoFlag === "threshold"
-                              ? "2px dashed #d4a017"
+                              ? "3px dashed #d4a017"
                               : "1px solid rgba(226, 232, 240, 1)",
                         }}
                       >
@@ -2091,8 +2091,9 @@ export default function HomePage() {
                                   className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
                                     isPage1
                                       ? "border border-amber-400 bg-amber-50 text-amber-800"
-                                      : "border border-amber-300 border-dashed bg-amber-25 text-amber-700"
+                                      : "border border-amber-300 text-amber-700"
                                   }`}
+                                  style={!isPage1 ? { borderWidth: "2.5px", borderStyle: "dashed" } : undefined}
                                 >
                                   {kw.term}
                                   {kw.position ? ` • ${kw.position}` : ""}
@@ -2723,11 +2724,31 @@ export default function HomePage() {
                             {kw.volume ? `${kw.position ? " • " : ""}SV ${kw.volume}` : ""}
                           </span>
                         </div>
-                        {isBrandKeyword(kw) && (
-                          <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">
-                            Brand
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1">
+                          {kw.position && (
+                            <span
+                              className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
+                                kw.position <= 10
+                                  ? "border border-amber-400 bg-amber-50 text-amber-800"
+                                  : kw.position <= 20
+                                  ? "border border-amber-300 text-amber-700"
+                                  : "border border-slate-200 text-slate-600"
+                              }`}
+                              style={
+                                kw.position > 10 && kw.position <= 20
+                                  ? { borderWidth: "2.5px", borderStyle: "dashed" }
+                                  : undefined
+                              }
+                            >
+                              {kw.position <= 20 ? `Top ${kw.position}` : `Pos ${kw.position}`}
+                            </span>
+                          )}
+                          {isBrandKeyword(kw) && (
+                            <span className="rounded-full bg-amber-100 px-2 py-1 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200">
+                              Brand
+                            </span>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
