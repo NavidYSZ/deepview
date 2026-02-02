@@ -856,12 +856,15 @@ export default function HomePage() {
           ? Math.max(CARD_MIN_HEIGHT, ...inputNodes.map((n) => estimateHeight(n)))
           : CARD_MIN_HEIGHT;
 
+      const nodeSep = 40;
+      const rankSep = 140;
+
       const g = new dagre.graphlib.Graph();
       g.setDefaultEdgeLabel(() => ({}));
       g.setGraph({
         rankdir: "TB",
-        nodesep: 40,
-        ranksep: 140,
+        nodesep: nodeSep,
+        ranksep: rankSep,
         marginx: 60,
         marginy: 40,
       });
@@ -927,36 +930,63 @@ export default function HomePage() {
       const edgesWithStyle = layoutedEdges.map((e) => ({ ...e }));
 
       const wrappedTargets = new Set<string>();
-      const xGap = 240;
-      const yGap = maxHeight + 80;
+      const wrapCols = 4;
+      const xGap = CARD_WIDTH + nodeSep;
+      const yGap = maxHeight + 100;
+
+      const translateSubtree = (rootId: string, dx: number, dy: number) => {
+        const stack = [rootId];
+        while (stack.length) {
+          const currentId = stack.pop()!;
+          const idx = layouted.findIndex((n) => n.id === currentId);
+          if (idx >= 0) {
+            const node = layouted[idx];
+            const skipManualGhost = node.data?.isGhost && node.data?.isManualPosition;
+            if (!skipManualGhost) {
+              layouted[idx] = {
+                ...node,
+                position: {
+                  x: node.position.x + dx,
+                  y: node.position.y + dy,
+                },
+              };
+            }
+          }
+          (childrenByParent[currentId] || []).forEach((childId) => stack.push(childId));
+        }
+      };
 
       Object.entries(childrenByParent).forEach(([parentId, childIds]) => {
-        if (childIds.length <= 4) return;
         const parentNode = layouted.find((n) => n.id === parentId);
         if (!parentNode) return;
         const parentDepth = parentNode.data?.depth ?? 0;
         if (parentDepth <= 1) return;
 
-        const centerX = parentNode.position.x + 100;
-        const baseY = parentNode.position.y + maxHeight + 80;
-        const rows = Math.ceil(childIds.length / 4);
+        const realChildren = childIds.filter((id) => {
+          const node = nodesById.get(id);
+          return !(node?.data?.isGhost);
+        });
+        if (realChildren.length <= wrapCols) return;
 
-        childIds.forEach((childId, idx) => {
-          const row = Math.floor(idx / 4);
-          const col = idx % 4;
-          const rowCount =
-            row === rows - 1 && childIds.length % 4 !== 0 ? childIds.length % 4 : 4;
+        const centerX = parentNode.position.x + CARD_WIDTH / 2;
+        const baseY = parentNode.position.y + maxHeight + 80;
+        const rows = Math.ceil(realChildren.length / wrapCols);
+
+        realChildren.forEach((childId, idx) => {
+          const row = Math.floor(idx / wrapCols);
+          const col = idx % wrapCols;
+          const rowCount = row === rows - 1 && realChildren.length % wrapCols !== 0 ? realChildren.length % wrapCols : wrapCols;
           const startX = centerX - ((rowCount - 1) * xGap) / 2;
 
           const targetIndex = layouted.findIndex((n) => n.id === childId);
-          if (targetIndex >= 0 && !layouted[targetIndex].data?.isGhost) {
-            layouted[targetIndex] = {
-              ...layouted[targetIndex],
-              position: {
-                x: startX + col * xGap - 100,
-                y: baseY + row * yGap - 60,
-              },
-            };
+          if (targetIndex >= 0) {
+            const targetNode = layouted[targetIndex];
+            if (targetNode.data?.isGhost) return; // Ghosts bleiben unverändert, sollen Raster nicht verzerren
+            const newX = startX + col * xGap - CARD_WIDTH / 2;
+            const newY = baseY + row * yGap;
+            const dx = newX - targetNode.position.x;
+            const dy = newY - targetNode.position.y;
+            translateSubtree(childId, dx, dy);
             wrappedTargets.add(childId);
           }
         });
@@ -966,6 +996,7 @@ export default function HomePage() {
         if (wrappedTargets.has(edge.target)) {
           edgesWithStyle[index] = {
             ...edge,
+            type: "straight",
             style: { stroke: "rgba(0,0,0,0.35)", strokeWidth: 2 },
           };
         }
